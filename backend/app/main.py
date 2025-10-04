@@ -187,13 +187,12 @@ def update_actual_prices_realtime():
     cursor = conn.cursor()
 
     # Get predictions that need updating (including recent ones for real-time accuracy)
+    # Only include predictions for dates that have market data available
     cursor.execute('''
         SELECT id, prediction_date, predicted_price, actual_price, accuracy_percentage
         FROM predictions
-        WHERE prediction_date <= date('now')
-        AND (actual_price IS NULL OR
-             (prediction_date = date('now') AND
-              updated_at < datetime('now', '-30 minutes')))
+        WHERE prediction_date < date('now')
+        AND actual_price IS NULL
         ORDER BY prediction_date
     ''')
 
@@ -217,6 +216,9 @@ def update_actual_prices_realtime():
 
         logger.info(
             f"Available market data dates: {sorted(list(available_dates))[-10:]}")
+        logger.info(
+            f"Latest market data date: {max(available_dates) if available_dates else 'None'}")
+        logger.info(f"Current date: {datetime.now().strftime('%Y-%m-%d')}")
 
     except Exception as e:
         logger.error(f"Error fetching market data: {e}")
@@ -264,7 +266,8 @@ def update_actual_prices_realtime():
                 logger.info(
                     f"Updated {pred_date}: Predicted {pred_price:.2f}, Actual {actual_price:.2f}, Accuracy {accuracy:.2f}%")
             else:
-                logger.info(f"Skipping {pred_date} - no market data available")
+                logger.info(
+                    f"Skipping {pred_date} - no market data available (market may not have closed yet for today's date)")
 
         except Exception as e:
             logger.error(f"Error updating actual price for {pred_date}: {e}")
@@ -393,6 +396,78 @@ def get_prediction_for_date(prediction_date):
     conn.close()
 
     return result[0] if result else None
+
+
+def update_same_day_predictions():
+    """Update predictions for today's date when market data becomes available"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    # Get today's predictions that don't have actual prices yet
+    cursor.execute('''
+        SELECT id, prediction_date, predicted_price, actual_price, accuracy_percentage
+        FROM predictions
+        WHERE prediction_date = ?
+        AND actual_price IS NULL
+        ORDER BY created_at DESC
+    ''', (today,))
+
+    predictions = cursor.fetchall()
+
+    if not predictions:
+        logger.info(f"No same-day predictions found for {today}")
+        conn.close()
+        return
+
+    # Get today's market data
+    try:
+        gold = yf.Ticker("GC=F")
+        hist = gold.history(period="1d", interval="1d")
+
+        if hist.empty:
+            logger.info(f"No market data available for {today} yet")
+            conn.close()
+            return
+
+        # Check if we have data for today
+        today_data = hist[hist.index.date == datetime.now().date()]
+        if today_data.empty:
+            logger.info(
+                f"Market data for {today} not yet available (market may not have closed)")
+            conn.close()
+            return
+
+        actual_price = float(today_data['Close'].iloc[0])
+        logger.info(f"Found market data for {today}: ${actual_price:.2f}")
+
+        updated_count = 0
+        for pred_id, pred_date, pred_price, current_actual, current_accuracy in predictions:
+            # Calculate accuracy
+            error_percentage = abs(
+                pred_price - actual_price) / actual_price * 100
+            accuracy = max(0, 100 - error_percentage)
+
+            # Update prediction with new accuracy
+            cursor.execute('''
+                UPDATE predictions
+                SET actual_price = ?, accuracy_percentage = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (actual_price, accuracy, pred_id))
+
+            updated_count += 1
+            logger.info(
+                f"Updated {pred_date}: Predicted {pred_price:.2f}, Actual {actual_price:.2f}, Accuracy {accuracy:.2f}%")
+
+        conn.commit()
+        logger.info(
+            f"Updated {updated_count} same-day predictions for {today}")
+
+    except Exception as e:
+        logger.error(f"Error updating same-day predictions: {e}")
+    finally:
+        conn.close()
 
 
 def cleanup_invalid_predictions():
@@ -768,6 +843,9 @@ def get_xauusd_daily_data():
             # Update actual prices for past predictions with real-time data
             update_actual_prices_realtime()
 
+            # Update same-day predictions if market data is available
+            update_same_day_predictions()
+
             # Get historical predictions for ghost line
             historical_predictions = get_historical_predictions(30)
 
@@ -1001,6 +1079,7 @@ async def continuous_accuracy_updates():
         try:
             logger.info("Running continuous accuracy update...")
             update_actual_prices_realtime()
+            update_same_day_predictions()
             logger.info("Continuous accuracy update completed")
         except Exception as e:
             logger.error(f"Error in continuous accuracy update: {e}")
