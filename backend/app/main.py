@@ -109,6 +109,7 @@ def get_historical_predictions(days=30):
         SELECT prediction_date, predicted_price, actual_price
         FROM predictions p1
         WHERE prediction_date >= date('now', '-{} days')
+        AND prediction_date != '2025-10-11'
         AND p1.created_at = (
             SELECT MAX(p2.created_at)
             FROM predictions p2
@@ -143,6 +144,7 @@ def get_accuracy_stats():
         FROM predictions p1
         WHERE accuracy_percentage IS NOT NULL
         AND prediction_date >= date('now', '-30 days')
+        AND prediction_date != '2025-10-11'
         AND p1.created_at = (
             SELECT MAX(p2.created_at)
             FROM predictions p2
@@ -157,6 +159,7 @@ def get_accuracy_stats():
         SELECT COUNT(DISTINCT prediction_date)
         FROM predictions p1
         WHERE prediction_date >= date('now', '-30 days')
+        AND prediction_date != '2025-10-11'
         AND p1.created_at = (
             SELECT MAX(p2.created_at)
             FROM predictions p2
@@ -229,6 +232,12 @@ def update_actual_prices_realtime():
     logger.info(f"Found {len(predictions)} predictions to evaluate")
     for pred_id, pred_date, pred_price, current_actual, current_accuracy in predictions:
         try:
+            # Skip accuracy calculation for October 11th as requested
+            if pred_date == "2025-10-11":
+                logger.info(
+                    f"Skipping accuracy calculation for {pred_date} as requested")
+                continue
+
             logger.info(
                 f"Processing prediction for {pred_date}, available_dates contains: {pred_date in available_dates}")
             # Only try to fetch data if we know the date has market data
