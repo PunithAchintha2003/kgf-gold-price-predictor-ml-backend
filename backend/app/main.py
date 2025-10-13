@@ -13,6 +13,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import MinMaxScaler
 import sqlite3
 import os
+import time
 from models.ml_model import GoldPriceMLPredictor
 
 # Set up logging
@@ -21,6 +22,117 @@ logger = logging.getLogger(__name__)
 
 # Database setup
 DB_PATH = "data/gold_predictions.db"
+BACKUP_DB_PATH = "data/gold_predictions_backup.db"
+
+# Cache for market data to reduce API calls
+_market_data_cache = {}
+_cache_timestamp = None
+CACHE_DURATION = 30  # 30 seconds for more real-time updates
+_last_api_call = 0
+API_COOLDOWN = 1  # 1 second between API calls
+
+
+def get_cached_market_data():
+    """Get cached market data or fetch new data if cache is expired"""
+    global _market_data_cache, _cache_timestamp, _last_api_call
+
+    now = datetime.now()
+    if (_cache_timestamp is None or
+        (now - _cache_timestamp).total_seconds() > CACHE_DURATION or
+            not _market_data_cache):
+
+        # Rate limiting: wait if we made a call recently
+        current_time = time.time()
+        if current_time - _last_api_call < API_COOLDOWN:
+            time.sleep(API_COOLDOWN - (current_time - _last_api_call))
+
+        # Try multiple symbols for better reliability
+        symbols_to_try = ["GC=F", "GLD", "GOLD"]
+        hist = None
+
+        for symbol in symbols_to_try:
+            try:
+                _last_api_call = time.time()
+                gold = yf.Ticker(symbol)
+                hist = gold.history(period="1mo", interval="1d")
+                if not hist.empty:
+                    logger.info(f"Successfully fetched data using {symbol}")
+                    _market_data_cache = {'hist': hist, 'symbol': symbol}
+                    _cache_timestamp = now
+                    break
+            except Exception as e:
+                logger.warning(f"Failed to fetch data from {symbol}: {e}")
+                continue
+
+        if hist is None or hist.empty:
+            logger.error("All gold data sources failed")
+            return None, None
+
+    return _market_data_cache.get('hist'), _market_data_cache.get('symbol')
+
+
+def get_realtime_price_data():
+    """Get real-time price data bypassing cache for immediate updates"""
+    global _last_api_call
+    try:
+        # Rate limiting: wait if we made a call recently
+        current_time = time.time()
+        if current_time - _last_api_call < API_COOLDOWN:
+            time.sleep(API_COOLDOWN - (current_time - _last_api_call))
+
+        # Try multiple symbols for better reliability
+        symbols_to_try = ["GC=F", "GLD", "GOLD"]
+
+        for symbol in symbols_to_try:
+            try:
+                _last_api_call = time.time()
+                gold = yf.Ticker(symbol)
+                # Get very recent data with 1-minute intervals for real-time feel
+                hist = gold.history(period="1d", interval="1m")
+
+                if not hist.empty:
+                    current_price = float(hist['Close'].iloc[-1])
+                    # Calculate price change from previous close
+                    if len(hist) > 1:
+                        prev_close = float(hist['Close'].iloc[-2])
+                        price_change = current_price - prev_close
+                        change_percentage = (price_change / prev_close) * 100
+                    else:
+                        price_change = 0
+                        change_percentage = 0
+
+                    return {
+                        'current_price': round(current_price, 2),
+                        'price_change': round(price_change, 2),
+                        'change_percentage': round(change_percentage, 2),
+                        'last_updated': hist.index[-1].strftime('%Y-%m-%d %H:%M:%S'),
+                        'symbol': symbol,
+                        'timestamp': datetime.now().isoformat()
+                    }
+            except Exception as e:
+                logger.warning(
+                    f"Failed to fetch real-time data from {symbol}: {e}")
+                continue
+
+        # Fallback to cached data if real-time fails
+        hist, symbol = get_cached_market_data()
+        if hist is not None and not hist.empty:
+            current_price = float(hist['Close'].iloc[-1])
+            return {
+                'current_price': round(current_price, 2),
+                'price_change': None,
+                'change_percentage': None,
+                'last_updated': None,
+                'symbol': symbol,
+                'timestamp': datetime.now().isoformat()
+            }
+
+        return None
+
+    except Exception as e:
+        logger.error(f"Error fetching real-time price data: {e}")
+        return None
+
 
 # Initialize ML predictor
 ml_predictor = GoldPriceMLPredictor()
@@ -78,6 +190,116 @@ def init_database():
     logger.info("Database initialized successfully")
 
 
+def init_backup_database():
+    """Initialize backup SQLite database for storing predictions"""
+    conn = sqlite3.connect(BACKUP_DB_PATH)
+    cursor = conn.cursor()
+
+    # Create predictions table with same structure plus backup timestamp
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prediction_date TEXT NOT NULL,
+            predicted_price REAL NOT NULL,
+            actual_price REAL,
+            accuracy_percentage REAL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            backup_created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    conn.commit()
+    conn.close()
+    logger.info("Backup database initialized successfully")
+
+
+def backup_predictions():
+    """Backup all predictions to backup database"""
+    try:
+        # Connect to both databases
+        main_conn = sqlite3.connect(DB_PATH)
+        backup_conn = sqlite3.connect(BACKUP_DB_PATH)
+
+        main_cursor = main_conn.cursor()
+        backup_cursor = backup_conn.cursor()
+
+        # Get all predictions from main database
+        main_cursor.execute('''
+            SELECT prediction_date, predicted_price, actual_price, accuracy_percentage, created_at, updated_at
+            FROM predictions
+            ORDER BY created_at
+        ''')
+
+        predictions = main_cursor.fetchall()
+
+        # Clear existing backup data
+        backup_cursor.execute('DELETE FROM predictions')
+
+        # Insert all predictions into backup database
+        for pred in predictions:
+            backup_cursor.execute('''
+                INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage, created_at, updated_at, backup_created_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ''', pred)
+
+        backup_conn.commit()
+
+        main_conn.close()
+        backup_conn.close()
+
+        logger.info(
+            f"Successfully backed up {len(predictions)} predictions to backup database")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error backing up predictions: {e}")
+        return False
+
+
+def restore_from_backup():
+    """Restore predictions from backup database"""
+    try:
+        # Connect to both databases
+        main_conn = sqlite3.connect(DB_PATH)
+        backup_conn = sqlite3.connect(BACKUP_DB_PATH)
+
+        main_cursor = main_conn.cursor()
+        backup_cursor = backup_conn.cursor()
+
+        # Get all predictions from backup database
+        backup_cursor.execute('''
+            SELECT prediction_date, predicted_price, actual_price, accuracy_percentage, created_at, updated_at
+            FROM predictions
+            ORDER BY created_at
+        ''')
+
+        predictions = backup_cursor.fetchall()
+
+        # Clear existing main data
+        main_cursor.execute('DELETE FROM predictions')
+
+        # Insert all predictions into main database
+        for pred in predictions:
+            main_cursor.execute('''
+                INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', pred)
+
+        main_conn.commit()
+
+        main_conn.close()
+        backup_conn.close()
+
+        logger.info(
+            f"Successfully restored {len(predictions)} predictions from backup database")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error restoring from backup: {e}")
+        return False
+
+
 def save_prediction(prediction_date, predicted_price, actual_price=None):
     """Save prediction to database with correct accuracy calculation"""
     conn = sqlite3.connect(DB_PATH)
@@ -99,6 +321,9 @@ def save_prediction(prediction_date, predicted_price, actual_price=None):
     conn.commit()
     conn.close()
 
+    # Automatically backup after saving
+    backup_predictions()
+
 
 def get_historical_predictions(days=30):
     """Get historical predictions for ghost line - all predictions including future ones"""
@@ -109,7 +334,6 @@ def get_historical_predictions(days=30):
         SELECT prediction_date, predicted_price, actual_price
         FROM predictions p1
         WHERE prediction_date >= date('now', '-{} days')
-        AND prediction_date != '2025-10-11'
         AND p1.created_at = (
             SELECT MAX(p2.created_at)
             FROM predictions p2
@@ -144,7 +368,7 @@ def get_accuracy_stats():
         FROM predictions p1
         WHERE accuracy_percentage IS NOT NULL
         AND prediction_date >= date('now', '-30 days')
-        AND prediction_date != '2025-10-11'
+        AND prediction_date != '2025-10-13'
         AND p1.created_at = (
             SELECT MAX(p2.created_at)
             FROM predictions p2
@@ -159,7 +383,7 @@ def get_accuracy_stats():
         SELECT COUNT(DISTINCT prediction_date)
         FROM predictions p1
         WHERE prediction_date >= date('now', '-30 days')
-        AND prediction_date != '2025-10-11'
+        AND prediction_date != '2025-10-13'
         AND p1.created_at = (
             SELECT MAX(p2.created_at)
             FROM predictions p2
@@ -170,17 +394,61 @@ def get_accuracy_stats():
     total_result = cursor.fetchone()
     conn.close()
 
+    # Get R² score from recent performance (more realistic than training CV score)
+    r2_score = 0.0
+    try:
+        # Calculate R² based on recent predictions vs actual prices
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        # Get recent predictions with actual prices for R² calculation
+        cursor.execute('''
+            SELECT predicted_price, actual_price
+            FROM predictions p1
+            WHERE actual_price IS NOT NULL
+            AND prediction_date >= date('now', '-30 days')
+            AND prediction_date != '2025-10-13'
+            AND p1.created_at = (
+                SELECT MAX(p2.created_at)
+                FROM predictions p2
+                WHERE p2.prediction_date = p1.prediction_date
+            )
+            ORDER BY prediction_date DESC
+            LIMIT 10
+        ''')
+
+        recent_data = cursor.fetchall()
+        conn.close()
+
+        if len(recent_data) >= 3:  # Need at least 3 data points for R²
+            from sklearn.metrics import r2_score
+            import numpy as np
+
+            predicted = [row[0] for row in recent_data]
+            actual = [row[1] for row in recent_data]
+
+            r2 = r2_score(actual, predicted)
+            r2_score = round(r2 * 100, 1)  # Convert to percentage
+        else:
+            # Fallback to training CV score if not enough recent data
+            if hasattr(ml_predictor, 'best_score') and ml_predictor.best_score is not None:
+                r2_score = round(ml_predictor.best_score * 100, 1)
+    except:
+        r2_score = 0.0
+
     if accuracy_result and accuracy_result[1] > 0:
         return {
             # Now shows average accuracy (higher is better)
             'average_accuracy': round(accuracy_result[0], 2),
             'total_predictions': total_result[0] if total_result else 0,
-            'evaluated_predictions': accuracy_result[1]
+            'evaluated_predictions': accuracy_result[1],
+            'r2_score': r2_score
         }
     return {
         'average_accuracy': 0,
         'total_predictions': total_result[0] if total_result else 0,
-        'evaluated_predictions': 0
+        'evaluated_predictions': 0,
+        'r2_score': r2_score
     }
 
 
@@ -229,17 +497,12 @@ def update_actual_prices_realtime():
         return
 
     updated_count = 0
+    skipped_dates = set()  # Track which dates we've already logged as skipped
     logger.info(f"Found {len(predictions)} predictions to evaluate")
     for pred_id, pred_date, pred_price, current_actual, current_accuracy in predictions:
         try:
-            # Skip accuracy calculation for October 11th as requested
-            if pred_date == "2025-10-11":
-                logger.info(
-                    f"Skipping accuracy calculation for {pred_date} as requested")
-                continue
+            # Process all predictions including October 11th
 
-            logger.info(
-                f"Processing prediction for {pred_date}, available_dates contains: {pred_date in available_dates}")
             # Only try to fetch data if we know the date has market data
             if pred_date in available_dates:
                 # For today's predictions, use real-time price; for past dates, use historical close
@@ -275,8 +538,8 @@ def update_actual_prices_realtime():
                 logger.info(
                     f"Updated {pred_date}: Predicted {pred_price:.2f}, Actual {actual_price:.2f}, Accuracy {accuracy:.2f}%")
             else:
-                logger.info(
-                    f"Skipping {pred_date} - no market data available (market may not have closed yet for today's date)")
+                # Silently skip dates without market data - no logging needed
+                pass
 
         except Exception as e:
             logger.error(f"Error updating actual price for {pred_date}: {e}")
@@ -527,8 +790,9 @@ def cleanup_invalid_predictions():
         conn.close()
 
 
-# Initialize database on startup
+# Initialize databases on startup
 init_database()
+init_backup_database()
 
 app = FastAPI(title="XAU/USD Real-time Data API", version="1.0.0")
 
@@ -540,6 +804,103 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for frontend connectivity verification"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "service": "XAU/USD Real-time Data API",
+        "version": "1.0.0"
+    }
+
+
+@app.post("/backup")
+async def create_backup():
+    """Create backup of all predictions"""
+    success = backup_predictions()
+    return {
+        "status": "success" if success else "error",
+        "message": "Backup created successfully" if success else "Failed to create backup",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.post("/restore")
+async def restore_backup():
+    """Restore predictions from backup"""
+    success = restore_from_backup()
+    return {
+        "status": "success" if success else "error",
+        "message": "Data restored from backup successfully" if success else "Failed to restore from backup",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.get("/backup/status")
+async def backup_status():
+    """Get backup database status"""
+    try:
+        backup_conn = sqlite3.connect(BACKUP_DB_PATH)
+        backup_cursor = backup_conn.cursor()
+
+        # Get backup statistics
+        backup_cursor.execute('SELECT COUNT(*) FROM predictions')
+        backup_count = backup_cursor.fetchone()[0]
+
+        backup_cursor.execute('SELECT MAX(backup_created_at) FROM predictions')
+        last_backup = backup_cursor.fetchone()[0]
+
+        backup_conn.close()
+
+        # Get main database count for comparison
+        main_conn = sqlite3.connect(DB_PATH)
+        main_cursor = main_conn.cursor()
+        main_cursor.execute('SELECT COUNT(*) FROM predictions')
+        main_count = main_cursor.fetchone()[0]
+        main_conn.close()
+
+        return {
+            "status": "success",
+            "main_database_count": main_count,
+            "backup_database_count": backup_count,
+            "last_backup": last_backup,
+            "backup_synced": main_count == backup_count,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error checking backup status: {e}",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@app.get("/debug/realtime")
+async def debug_realtime():
+    """Debug endpoint to test real-time price data"""
+    try:
+        realtime_data = get_realtime_price_data()
+        if realtime_data:
+            return {
+                "status": "success",
+                "realtime_data": realtime_data,
+                "message": "Real-time data fetched successfully"
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "Real-time data fetch failed",
+                "realtime_data": None
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error in debug realtime: {e}",
+            "realtime_data": None
+        }
 
 
 class ConnectionManager:
@@ -809,12 +1170,20 @@ def predict_next_day_price_smc(hist_data):
 def get_xauusd_daily_data():
     """Fetch XAU/USD daily data using yfinance with continuous predictions"""
     try:
-        # XAU/USD is represented as GC=F (Gold Futures) in Yahoo Finance
-        gold = yf.Ticker("GC=F")
+        # Use cached market data to reduce API calls
+        hist, symbol_used = get_cached_market_data()
 
-        # Get daily data for the last 30 days
-        # Note: Using 1mo instead of 30d for better reliability with GC=F
-        hist = gold.history(period="1mo", interval="1d")
+        if hist is None or hist.empty:
+            logger.error("All gold data sources failed")
+            return {
+                "symbol": "XAUUSD",
+                "timeframe": "daily",
+                "data": [],
+                "current_price": 0.0,
+                "timestamp": datetime.now().isoformat(),
+                "status": "error",
+                "message": "Unable to fetch gold price data"
+            }
 
         if not hist.empty:
             # Check if we already made a prediction for today
@@ -927,40 +1296,28 @@ async def get_daily_data():
 
 @app.get("/xauusd/realtime")
 async def get_realtime_price():
-    """REST endpoint to get real-time XAU/USD current price"""
-    try:
-        # Get real-time price using 2-day period with 1-minute interval for more current data
-        # Note: period="1d" doesn't work with GC=F, so we use "2d" and take the latest data
-        gold = yf.Ticker("GC=F")
-        hist = gold.history(period="2d", interval="1m")
+    """REST endpoint to get real-time XAU/USD data with predictions"""
+    # Get real-time price data
+    realtime_data = get_realtime_price_data()
 
-        if not hist.empty:
-            current_price = round(float(hist['Close'].iloc[-1]), 2)
-            timestamp = hist.index[-1].isoformat()
+    if realtime_data:
+        # Get the full daily data for predictions and historical data
+        daily_data = get_xauusd_daily_data()
 
-            return {
-                "symbol": "XAUUSD",
-                "current_price": current_price,
-                "timestamp": timestamp,
-                "status": "success"
-            }
-        else:
-            return {
-                "symbol": "XAUUSD",
-                "current_price": 0.0,
-                "timestamp": datetime.now().isoformat(),
-                "status": "error",
-                "message": "No real-time data available"
-            }
-    except Exception as e:
-        logger.error(f"Error fetching real-time price: {e}")
-        return {
-            "symbol": "XAUUSD",
-            "current_price": 0.0,
-            "timestamp": datetime.now().isoformat(),
-            "status": "error",
-            "message": str(e)
-        }
+        # Merge real-time price data with daily data
+        if daily_data.get('status') == 'success':
+            daily_data.update({
+                'current_price': realtime_data['current_price'],
+                'price_change': realtime_data['price_change'],
+                'change_percentage': realtime_data['change_percentage'],
+                'last_updated': realtime_data['last_updated'],
+                'realtime_symbol': realtime_data['symbol']
+            })
+
+        return daily_data
+    else:
+        # Fallback to regular daily data if real-time fails
+        return get_xauusd_daily_data()
 
 
 @app.get("/xauusd/explanation")
@@ -1056,14 +1413,31 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            # Get daily data
-            daily_data = get_xauusd_daily_data()
+            # Get real-time price data
+            realtime_data = get_realtime_price_data()
+
+            if realtime_data:
+                # Get the full daily data for predictions and historical data
+                daily_data = get_xauusd_daily_data()
+
+                # Merge real-time price data with daily data
+                if daily_data.get('status') == 'success':
+                    daily_data.update({
+                        'current_price': realtime_data['current_price'],
+                        'price_change': realtime_data['price_change'],
+                        'change_percentage': realtime_data['change_percentage'],
+                        'last_updated': realtime_data['last_updated'],
+                        'realtime_symbol': realtime_data['symbol']
+                    })
+            else:
+                # Fallback to regular daily data if real-time fails
+                daily_data = get_xauusd_daily_data()
 
             # Send to client
             await manager.send_personal_message(json.dumps(daily_data), websocket)
 
-            # Wait 2 seconds before next update for real-time feel
-            await asyncio.sleep(2)
+            # Wait 5 seconds before next update for real-time feel
+            await asyncio.sleep(5)
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
