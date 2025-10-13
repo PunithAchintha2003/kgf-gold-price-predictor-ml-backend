@@ -9,10 +9,12 @@ import signal
 import time
 from pathlib import Path
 
+
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully"""
     print("\n🛑 Shutting down backend server...")
     sys.exit(0)
+
 
 def check_dependencies():
     """Check if required dependencies are available"""
@@ -29,6 +31,7 @@ def check_dependencies():
         print("Please install requirements: pip install -r backend/requirements.txt")
         return False
 
+
 def check_backend_structure():
     """Check if backend directory structure is correct"""
     backend_dir = Path("backend")
@@ -37,37 +40,38 @@ def check_backend_structure():
         "backend/models/ml_model.py",
         "backend/requirements.txt"
     ]
-    
+
     for file_path in required_files:
         if not Path(file_path).exists():
             print(f"❌ Missing required file: {file_path}")
             return False
-    
+
     print("✅ Backend structure verified")
     return True
+
 
 def main():
     """Main function to start the backend server"""
     # Set up signal handler for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
-    
+
     print("🚀 Starting XAU/USD Real-time Data API...")
     print("=" * 60)
-    
+
     # Check if we're in the right directory
     if not Path("backend").exists():
         print("❌ Error: Backend directory not found!")
         print("Please run this script from the project root directory.")
         sys.exit(1)
-    
+
     # Check dependencies
     if not check_dependencies():
         sys.exit(1)
-    
+
     # Check backend structure
     if not check_backend_structure():
         sys.exit(1)
-    
+
     print("📊 Backend will be available at: http://localhost:8001")
     print("📡 WebSocket endpoint: ws://localhost:8001/ws/xauusd")
     print("🌐 API docs: http://localhost:8001/docs")
@@ -76,15 +80,18 @@ def main():
     print("\n" + "=" * 60)
     print("Press Ctrl+C to stop the server")
     print("=" * 60)
-    
+
     try:
-        # Change to backend directory and run uvicorn
-        os.chdir("backend")
+        # Ensure project root is on sys.path and run uvicorn with absolute module path
+        project_root = Path(__file__).resolve().parent
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+
         uvicorn.run(
-            "app.main:app",
+            "backend.app.main:app",
             host="0.0.0.0",
             port=8001,
-            reload=True,
+            reload=False,
             log_level="info",
             access_log=True
         )
@@ -93,6 +100,7 @@ def main():
     except Exception as e:
         print(f"❌ Error starting backend: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
