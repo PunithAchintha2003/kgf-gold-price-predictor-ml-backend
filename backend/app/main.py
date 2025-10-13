@@ -1,3 +1,4 @@
+from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
@@ -14,15 +15,18 @@ from sklearn.preprocessing import MinMaxScaler
 import sqlite3
 import os
 import time
-from models.ml_model import GoldPriceMLPredictor
+from backend.models.ml_model import GoldPriceMLPredictor
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+# Paths relative to backend directory
+BACKEND_DIR = Path(__file__).resolve().parent.parent
 # Database setup
-DB_PATH = "data/gold_predictions.db"
-BACKUP_DB_PATH = "data/gold_predictions_backup.db"
+DB_PATH = str(BACKEND_DIR / "data/gold_predictions.db")
+BACKUP_DB_PATH = str(BACKEND_DIR / "data/gold_predictions_backup.db")
 
 # Cache for market data to reduce API calls
 _market_data_cache = {}
@@ -137,7 +141,7 @@ def get_realtime_price_data():
 # Initialize ML predictor
 ml_predictor = GoldPriceMLPredictor()
 try:
-    ml_predictor.load_model('models/gold_ml_model.pkl')
+    ml_predictor.load_model(str(BACKEND_DIR / 'models/gold_ml_model.pkl'))
     logger.info("ML model loaded successfully")
 except:
     logger.warning("ML model not found, will train new model")
@@ -147,8 +151,9 @@ except:
         features_df = ml_predictor.create_fundamental_features(market_data)
         X, y = ml_predictor.prepare_training_data(features_df)
         if not X.empty:
-            ml_predictor.train_models(X, y)
-            ml_predictor.save_model('models/gold_ml_model.pkl')
+            ml_predictor.train_model(X, y)
+            ml_predictor.save_model(
+                str(BACKEND_DIR / 'models/gold_ml_model.pkl'))
             logger.info("New ML model trained and saved")
         else:
             logger.error("Failed to prepare training data for ML model")
@@ -354,7 +359,7 @@ def get_historical_predictions(days=30):
 
 def get_ml_model_display_name():
     """Get the display name for the current ML model"""
-    return "Lasso Regression"
+    return "Pure GRU Neural Network"
 
 
 def get_accuracy_stats():

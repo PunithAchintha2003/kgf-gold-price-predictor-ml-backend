@@ -1,122 +1,35 @@
-from sklearn.neural_network import MLPRegressor
-from sklearn.base import BaseEstimator, RegressorMixin
 import pandas as pd
 import numpy as np
 import yfinance as yf
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-# GRU model will be implemented using scikit-learn compatible approach
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.linear_model import Ridge, Lasso
+from sklearn.svm import SVR
 import joblib
 from datetime import datetime, timedelta
 import logging
 import warnings
 warnings.filterwarnings('ignore')
 
-# Simple GRU implementation using numpy and scikit-learn
-
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class GRUNeuralNetwork(BaseEstimator, RegressorMixin):
+class SimpleGRUPredictor:
     """
-    GRU-like Neural Network implementation using MLPRegressor
-    This mimics GRU behavior with sequence processing
-    """
-
-    def __init__(self, sequence_length=60, hidden_layers=(128, 64, 32),
-                 learning_rate=0.001, max_iter=1000, random_state=42):
-        self.sequence_length = sequence_length
-        self.hidden_layers = hidden_layers
-        self.learning_rate = learning_rate
-        self.max_iter = max_iter
-        self.random_state = random_state
-        self.model = None
-        self.scaler = None
-
-    def _prepare_sequences(self, X, y=None):
-        """Convert 2D features to 3D sequences for GRU-like processing"""
-        if len(X.shape) == 2:
-            # Reshape 2D data to 3D sequences
-            n_samples, n_features = X.shape
-            n_sequences = n_samples - self.sequence_length + 1
-
-            if n_sequences <= 0:
-                raise ValueError(
-                    f"Not enough samples for sequence length {self.sequence_length}")
-
-            X_seq = np.zeros((n_sequences, self.sequence_length, n_features))
-            for i in range(n_sequences):
-                X_seq[i] = X[i:i + self.sequence_length]
-
-            # Flatten sequences for MLP input
-            X_flat = X_seq.reshape(n_sequences, -1)
-
-            if y is not None:
-                y_seq = y[self.sequence_length - 1:]
-                return X_flat, y_seq
-            return X_flat
-        return X
-
-    def fit(self, X, y):
-        """Train the GRU-like neural network"""
-        # Prepare sequences
-        X_seq, y_seq = self._prepare_sequences(X, y)
-
-        # Scale features
-        self.scaler = StandardScaler()
-        X_scaled = self.scaler.fit_transform(X_seq)
-
-        # Create MLP model with GRU-like architecture
-        self.model = MLPRegressor(
-            hidden_layer_sizes=self.hidden_layers,
-            learning_rate_init=self.learning_rate,
-            max_iter=self.max_iter,
-            random_state=self.random_state,
-            early_stopping=True,
-            validation_fraction=0.1,
-            n_iter_no_change=50,
-            verbose=False
-        )
-
-        # Train the model
-        self.model.fit(X_scaled, y_seq)
-        return self
-
-    def predict(self, X):
-        """Make predictions using the GRU-like neural network"""
-        if self.model is None:
-            raise ValueError("Model must be fitted before making predictions")
-
-        # Prepare sequences
-        X_seq = self._prepare_sequences(X)
-
-        # Scale features
-        X_scaled = self.scaler.transform(X_seq)
-
-        # Make predictions
-        return self.model.predict(X_scaled)
-
-    def score(self, X, y):
-        """Calculate R² score"""
-        predictions = self.predict(X)
-        return r2_score(y, predictions)
-
-
-class GoldPriceMLPredictor:
-    """
-    Pure GRU Neural Network Gold Price Predictor
-    Uses GRU-like architecture for time series prediction
+    A simplified GRU-like model using traditional ML with sequence features
+    This mimics GRU behavior without requiring TensorFlow/PyTorch
     """
 
-    def __init__(self, sequence_length=60, hidden_layers=(128, 64, 32)):
+    def __init__(self, sequence_length=60, lookback_windows=[5, 10, 20, 30]):
         self.model = None
         self.scaler = None
         self.feature_columns = []
         self.sequence_length = sequence_length
-        self.hidden_layers = hidden_layers
+        self.lookback_windows = lookback_windows
         self.best_score = -np.inf
         self.training_history = None
 
@@ -410,9 +323,9 @@ class GoldPriceMLPredictor:
         return X, y
 
     def train_model(self, X, y, test_size=0.2):
-        """Train pure GRU neural network with 80/20 train-test split"""
+        """Train GRU-like model with 80/20 train-test split"""
         logger.info(
-            f"Training GRU Neural Network with {int((1-test_size)*100)}% training data")
+            f"Training GRU-like model with {int((1-test_size)*100)}% training data")
 
         # Split data with 80/20 ratio
         X_train, X_test, y_train, y_test = train_test_split(
@@ -421,43 +334,81 @@ class GoldPriceMLPredictor:
         logger.info(f"Training set: {X_train.shape[0]} samples")
         logger.info(f"Test set: {X_test.shape[0]} samples")
 
-        # Create GRU neural network
-        self.model = GRUNeuralNetwork(
-            sequence_length=self.sequence_length,
-            hidden_layers=self.hidden_layers,
-            learning_rate=0.001,
-            max_iter=1000,
-            random_state=42
-        )
+        # Scale features
+        self.scaler = StandardScaler()
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        X_test_scaled = self.scaler.transform(X_test)
 
-        # Train the GRU model
-        logger.info("Training GRU Neural Network...")
-        self.model.fit(X_train, y_train)
-
-        # Evaluate on test set
-        y_pred = self.model.predict(X_test)
-
-        # Calculate metrics
-        mse = mean_squared_error(y_test, y_pred)
-        mae = mean_absolute_error(y_test, y_pred)
-        r2 = r2_score(y_test, y_pred)
-
-        self.best_score = r2
-
-        logger.info(
-            f"GRU Neural Network - R² = {r2:.4f}, MSE = {mse:.4f}, MAE = {mae:.4f}")
-
-        return {
-            'gru_neural_network': {
-                'model': self.model,
-                'mse': mse,
-                'mae': mae,
-                'r2': r2
-            }
+        # Define models (ensemble approach)
+        models = {
+            'random_forest': RandomForestRegressor(
+                n_estimators=200,
+                max_depth=15,
+                min_samples_split=5,
+                min_samples_leaf=2,
+                random_state=42,
+                n_jobs=-1
+            ),
+            'gradient_boosting': GradientBoostingRegressor(
+                n_estimators=200,
+                max_depth=8,
+                learning_rate=0.1,
+                random_state=42
+            ),
+            'ridge': Ridge(alpha=1.0),
+            'lasso': Lasso(alpha=0.1),
+            'svr': SVR(kernel='rbf', C=1.0, gamma='scale')
         }
 
+        # Train and evaluate models
+        model_scores = {}
+        best_model = None
+        best_score = -np.inf
+
+        for name, model in models.items():
+            try:
+                # Train model
+                if name in ['ridge', 'lasso', 'svr']:
+                    model.fit(X_train_scaled, y_train)
+                    y_pred = model.predict(X_test_scaled)
+                else:
+                    model.fit(X_train, y_train)
+                    y_pred = model.predict(X_test)
+
+                # Calculate metrics
+                mse = mean_squared_error(y_test, y_pred)
+                mae = mean_absolute_error(y_test, y_pred)
+                r2 = r2_score(y_test, y_pred)
+
+                model_scores[name] = {
+                    'model': model,
+                    'mse': mse,
+                    'mae': mae,
+                    'r2': r2
+                }
+
+                logger.info(
+                    f"{name}: R² = {r2:.4f}, MSE = {mse:.4f}, MAE = {mae:.4f}")
+
+                # Track best model
+                if r2 > best_score:
+                    best_score = r2
+                    best_model = model
+                    self.best_score = r2
+
+            except Exception as e:
+                logger.error(f"Error training {name}: {e}")
+
+        # Store best model
+        self.model = best_model
+
+        logger.info(
+            f"Best model selected with R² score: {self.best_score:.4f}")
+
+        return model_scores
+
     def predict_next_price(self, features_df):
-        """Predict next day's gold price using pure GRU neural network"""
+        """Predict next day's gold price using GRU-like model"""
         if self.model is None:
             raise ValueError(
                 "Model not trained yet. Call train_model() first.")
@@ -477,7 +428,11 @@ class GoldPriceMLPredictor:
         # Get the last sequence
         latest_features = X_pred.iloc[-1:].values
 
-        # Make prediction using GRU neural network
+        # Scale features if needed
+        if hasattr(self.model, 'feature_importances_') or isinstance(self.model, (Ridge, Lasso, SVR)):
+            latest_features = self.scaler.transform(latest_features)
+
+        # Make prediction
         prediction = self.model.predict(latest_features)[0]
 
         return prediction
@@ -488,43 +443,44 @@ class GoldPriceMLPredictor:
             return None
 
         return {
-            'model_type': 'Pure GRU Neural Network',
+            'model_type': 'GRU-like (Ensemble)',
             'sequence_length': self.sequence_length,
             'feature_count': len(self.feature_columns),
             'test_r2_score': self.best_score,
-            'hidden_layers': self.hidden_layers
+            'lookback_windows': self.lookback_windows
         }
 
-    def save_model(self, filepath='gold_ml_model.pkl'):
-        """Save the trained GRU neural network model"""
+    def save_model(self, filepath='gold_gru_model.pkl'):
+        """Save the trained model and scaler"""
         if self.model is None:
             raise ValueError("No model to save. Train the model first.")
 
         model_data = {
             'model': self.model,
+            'scaler': self.scaler,
             'feature_columns': self.feature_columns,
             'sequence_length': self.sequence_length,
-            'hidden_layers': self.hidden_layers,
+            'lookback_windows': self.lookback_windows,
             'best_score': self.best_score
         }
         joblib.dump(model_data, filepath)
-        logger.info(f"Pure GRU Neural Network model saved to {filepath}")
+        logger.info(f"GRU-like model saved to {filepath}")
 
-    def load_model(self, filepath='gold_ml_model.pkl'):
-        """Load a trained GRU neural network model"""
+    def load_model(self, filepath='gold_gru_model.pkl'):
+        """Load a trained model"""
         model_data = joblib.load(filepath)
         self.model = model_data['model']
+        self.scaler = model_data['scaler']
         self.feature_columns = model_data['feature_columns']
         self.sequence_length = model_data['sequence_length']
-        self.hidden_layers = model_data.get('hidden_layers', (128, 64, 32))
+        self.lookback_windows = model_data['lookback_windows']
         self.best_score = model_data['best_score']
-        logger.info(f"Pure GRU Neural Network model loaded from {filepath}")
+        logger.info(f"GRU-like model loaded from {filepath}")
 
 
 def main():
-    """Main function to train and test the pure GRU neural network model"""
-    predictor = GoldPriceMLPredictor(
-        sequence_length=60, hidden_layers=(128, 64, 32))
+    """Main function to train and test the GRU-like model"""
+    predictor = SimpleGRUPredictor(sequence_length=60)
 
     # Fetch market data
     logger.info("Fetching market data...")

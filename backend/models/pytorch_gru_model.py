@@ -1,124 +1,81 @@
-from sklearn.neural_network import MLPRegressor
-from sklearn.base import BaseEstimator, RegressorMixin
+import os
 import pandas as pd
 import numpy as np
 import yfinance as yf
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-# GRU model will be implemented using scikit-learn compatible approach
 import joblib
 from datetime import datetime, timedelta
 import logging
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
 import warnings
 warnings.filterwarnings('ignore')
-
-# Simple GRU implementation using numpy and scikit-learn
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class GRUNeuralNetwork(BaseEstimator, RegressorMixin):
-    """
-    GRU-like Neural Network implementation using MLPRegressor
-    This mimics GRU behavior with sequence processing
-    """
+class GRUModel(nn.Module):
+    """PyTorch GRU model for gold price prediction"""
 
-    def __init__(self, sequence_length=60, hidden_layers=(128, 64, 32),
-                 learning_rate=0.001, max_iter=1000, random_state=42):
-        self.sequence_length = sequence_length
-        self.hidden_layers = hidden_layers
-        self.learning_rate = learning_rate
-        self.max_iter = max_iter
-        self.random_state = random_state
-        self.model = None
-        self.scaler = None
+    def __init__(self, input_size, hidden_sizes=[128, 64, 32], dropout=0.2):
+        super(GRUModel, self).__init__()
 
-    def _prepare_sequences(self, X, y=None):
-        """Convert 2D features to 3D sequences for GRU-like processing"""
-        if len(X.shape) == 2:
-            # Reshape 2D data to 3D sequences
-            n_samples, n_features = X.shape
-            n_sequences = n_samples - self.sequence_length + 1
+        self.hidden_sizes = hidden_sizes
+        self.num_layers = len(hidden_sizes)
 
-            if n_sequences <= 0:
-                raise ValueError(
-                    f"Not enough samples for sequence length {self.sequence_length}")
+        # GRU layers
+        self.gru_layers = nn.ModuleList()
+        for i, hidden_size in enumerate(hidden_sizes):
+            input_dim = input_size if i == 0 else hidden_sizes[i-1]
+            self.gru_layers.append(
+                nn.GRU(input_dim, hidden_size, batch_first=True,
+                       dropout=dropout if i < len(hidden_sizes)-1 else 0)
+            )
 
-            X_seq = np.zeros((n_sequences, self.sequence_length, n_features))
-            for i in range(n_sequences):
-                X_seq[i] = X[i:i + self.sequence_length]
+        # Dropout layer
+        self.dropout = nn.Dropout(dropout)
 
-            # Flatten sequences for MLP input
-            X_flat = X_seq.reshape(n_sequences, -1)
+        # Dense layers
+        self.fc1 = nn.Linear(hidden_sizes[-1], 16)
+        self.fc2 = nn.Linear(16, 1)
+        self.relu = nn.ReLU()
 
-            if y is not None:
-                y_seq = y[self.sequence_length - 1:]
-                return X_flat, y_seq
-            return X_flat
-        return X
+    def forward(self, x):
+        # Pass through GRU layers
+        for gru in self.gru_layers:
+            x, _ = gru(x)
+            x = self.dropout(x)
 
-    def fit(self, X, y):
-        """Train the GRU-like neural network"""
-        # Prepare sequences
-        X_seq, y_seq = self._prepare_sequences(X, y)
+        # Take the last output
+        x = x[:, -1, :]
 
-        # Scale features
-        self.scaler = StandardScaler()
-        X_scaled = self.scaler.fit_transform(X_seq)
+        # Dense layers
+        x = self.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
 
-        # Create MLP model with GRU-like architecture
-        self.model = MLPRegressor(
-            hidden_layer_sizes=self.hidden_layers,
-            learning_rate_init=self.learning_rate,
-            max_iter=self.max_iter,
-            random_state=self.random_state,
-            early_stopping=True,
-            validation_fraction=0.1,
-            n_iter_no_change=50,
-            verbose=False
-        )
-
-        # Train the model
-        self.model.fit(X_scaled, y_seq)
-        return self
-
-    def predict(self, X):
-        """Make predictions using the GRU-like neural network"""
-        if self.model is None:
-            raise ValueError("Model must be fitted before making predictions")
-
-        # Prepare sequences
-        X_seq = self._prepare_sequences(X)
-
-        # Scale features
-        X_scaled = self.scaler.transform(X_seq)
-
-        # Make predictions
-        return self.model.predict(X_scaled)
-
-    def score(self, X, y):
-        """Calculate R² score"""
-        predictions = self.predict(X)
-        return r2_score(y, predictions)
+        return x
 
 
-class GoldPriceMLPredictor:
-    """
-    Pure GRU Neural Network Gold Price Predictor
-    Uses GRU-like architecture for time series prediction
-    """
-
-    def __init__(self, sequence_length=60, hidden_layers=(128, 64, 32)):
+class GoldPriceGRUPredictor:
+    def __init__(self, sequence_length=60, hidden_sizes=[128, 64, 32], dropout=0.2):
         self.model = None
         self.scaler = None
         self.feature_columns = []
         self.sequence_length = sequence_length
-        self.hidden_layers = hidden_layers
+        self.hidden_sizes = hidden_sizes
+        self.dropout = dropout
         self.best_score = -np.inf
-        self.training_history = None
+        self.training_history = {'train_loss': [], 'val_loss': []}
+        self.device = torch.device(
+            'cuda' if torch.cuda.is_available() else 'cpu')
+        logger.info(f"Using device: {self.device}")
 
     def fetch_market_data(self, symbol='GC=F', period='2y'):
         """Fetch comprehensive market data for gold and related assets"""
@@ -306,10 +263,9 @@ class GoldPriceMLPredictor:
 
         return features_df
 
-    def create_sequence_features(self, data, target_col='gold_close', prediction_horizon=1):
-        """Create GRU-like sequence features using rolling statistics"""
-        logger.info(
-            f"Creating sequence features with length {self.sequence_length}")
+    def create_sequences(self, data, target_col='gold_close', prediction_horizon=1):
+        """Create sequences for time series data"""
+        logger.info(f"Creating sequences with length {self.sequence_length}")
 
         # Create target variable (future price)
         data = data.copy()
@@ -320,99 +276,53 @@ class GoldPriceMLPredictor:
 
         if data_clean.empty:
             logger.error("No valid data after cleaning NaN values")
-            return pd.DataFrame(), pd.Series()
+            return np.array([]), np.array([])
 
         # Separate features and target
         feature_cols = [
             col for col in data_clean.columns if col not in ['target', target_col]]
-        X = data_clean[feature_cols]
-        y = data_clean['target']
+        X = data_clean[feature_cols].values
+        y = data_clean['target'].values
 
-        # Create sequence-based features (GRU-like)
-        sequence_features = []
+        self.feature_columns = feature_cols
+
+        # Create sequences
+        X_sequences = []
+        y_sequences = []
 
         for i in range(self.sequence_length, len(X)):
-            # Get sequence window
-            window_data = X.iloc[i-self.sequence_length:i]
+            X_sequences.append(X[i-self.sequence_length:i])
+            y_sequences.append(y[i])
 
-            # Create sequence features
-            seq_row = {}
-
-            # Current values
-            for col in feature_cols:
-                seq_row[f'{col}_current'] = window_data[col].iloc[-1]
-
-            # Sequence statistics (mimicking GRU memory)
-            for col in feature_cols:
-                seq_row[f'{col}_mean'] = window_data[col].mean()
-                seq_row[f'{col}_std'] = window_data[col].std()
-                seq_row[f'{col}_min'] = window_data[col].min()
-                seq_row[f'{col}_max'] = window_data[col].max()
-                seq_row[f'{col}_trend'] = (window_data[col].iloc[-1] - window_data[col].iloc[0]) / \
-                    window_data[col].iloc[0] if window_data[col].iloc[0] != 0 else 0
-
-            # Rolling features for different lookback windows
-            for window in self.lookback_windows:
-                if window <= len(window_data):
-                    recent_data = window_data.iloc[-window:]
-                    for col in feature_cols:
-                        seq_row[f'{col}_ma_{window}'] = recent_data[col].mean()
-                        seq_row[f'{col}_std_{window}'] = recent_data[col].std()
-                        seq_row[f'{col}_change_{window}'] = (
-                            recent_data[col].iloc[-1] - recent_data[col].iloc[0]) / recent_data[col].iloc[0] if recent_data[col].iloc[0] != 0 else 0
-
-            # Price momentum features
-            if 'gold_close' in feature_cols:
-                gold_window = window_data['gold_close']
-                seq_row['gold_momentum_short'] = (
-                    gold_window.iloc[-1] - gold_window.iloc[-5]) / gold_window.iloc[-5] if len(gold_window) >= 5 else 0
-                seq_row['gold_momentum_medium'] = (
-                    gold_window.iloc[-1] - gold_window.iloc[-10]) / gold_window.iloc[-10] if len(gold_window) >= 10 else 0
-                seq_row['gold_momentum_long'] = (
-                    gold_window.iloc[-1] - gold_window.iloc[-20]) / gold_window.iloc[-20] if len(gold_window) >= 20 else 0
-
-                # Volatility features
-                seq_row['gold_volatility_short'] = gold_window.iloc[-5:
-                                                                    ].std() if len(gold_window) >= 5 else 0
-                seq_row['gold_volatility_medium'] = gold_window.iloc[-10:
-                                                                     ].std() if len(gold_window) >= 10 else 0
-                seq_row['gold_volatility_long'] = gold_window.iloc[-20:
-                                                                   ].std() if len(gold_window) >= 20 else 0
-
-            sequence_features.append(seq_row)
-
-        # Convert to DataFrame
-        X_sequences = pd.DataFrame(sequence_features)
-        y_sequences = y.iloc[self.sequence_length:].values
-
-        self.feature_columns = list(X_sequences.columns)
+        X_sequences = np.array(X_sequences)
+        y_sequences = np.array(y_sequences)
 
         logger.info(
-            f"Sequence features created - X shape: {X_sequences.shape}, y shape: {y_sequences.shape}")
+            f"Sequences created - X shape: {X_sequences.shape}, y shape: {y_sequences.shape}")
 
         return X_sequences, y_sequences
 
     def prepare_training_data(self, features_df, target_col='gold_close', prediction_horizon=1):
-        """Prepare training data for GRU-like model"""
+        """Prepare training data for GRU model"""
         logger.info(f"Original features shape: {features_df.shape}")
         logger.info(
             f"NaN count before cleaning: {features_df.isnull().sum().sum()}")
 
-        # Create sequence features
-        X, y = self.create_sequence_features(
+        # Create sequences
+        X, y = self.create_sequences(
             features_df, target_col, prediction_horizon)
 
-        if X.empty:
-            logger.error("No valid sequence features created")
-            return pd.DataFrame(), np.array([])
+        if X.size == 0:
+            logger.error("No valid sequences created")
+            return np.array([]), np.array([])
 
         logger.info(f"Final X shape: {X.shape}, y shape: {y.shape}")
         return X, y
 
-    def train_model(self, X, y, test_size=0.2):
-        """Train pure GRU neural network with 80/20 train-test split"""
+    def train_model(self, X, y, test_size=0.2, epochs=100, batch_size=32, learning_rate=0.001):
+        """Train GRU model with 80/20 train-test split"""
         logger.info(
-            f"Training GRU Neural Network with {int((1-test_size)*100)}% training data")
+            f"Training GRU model with {int((1-test_size)*100)}% training data")
 
         # Split data with 80/20 ratio
         X_train, X_test, y_train, y_test = train_test_split(
@@ -421,43 +331,131 @@ class GoldPriceMLPredictor:
         logger.info(f"Training set: {X_train.shape[0]} samples")
         logger.info(f"Test set: {X_test.shape[0]} samples")
 
-        # Create GRU neural network
-        self.model = GRUNeuralNetwork(
-            sequence_length=self.sequence_length,
-            hidden_layers=self.hidden_layers,
-            learning_rate=0.001,
-            max_iter=1000,
-            random_state=42
-        )
+        # Scale features
+        self.scaler = MinMaxScaler()
+        X_train_scaled = self.scaler.fit_transform(
+            X_train.reshape(-1, X_train.shape[-1])
+        ).reshape(X_train.shape)
+        X_test_scaled = self.scaler.transform(
+            X_test.reshape(-1, X_test.shape[-1])
+        ).reshape(X_test.shape)
 
-        # Train the GRU model
-        logger.info("Training GRU Neural Network...")
-        self.model.fit(X_train, y_train)
+        # Convert to PyTorch tensors
+        X_train_tensor = torch.FloatTensor(X_train_scaled).to(self.device)
+        y_train_tensor = torch.FloatTensor(y_train).to(self.device)
+        X_test_tensor = torch.FloatTensor(X_test_scaled).to(self.device)
+        y_test_tensor = torch.FloatTensor(y_test).to(self.device)
 
-        # Evaluate on test set
-        y_pred = self.model.predict(X_test)
+        # Create data loaders
+        train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+        train_loader = DataLoader(
+            train_dataset, batch_size=batch_size, shuffle=True)
 
-        # Calculate metrics
-        mse = mean_squared_error(y_test, y_pred)
-        mae = mean_absolute_error(y_test, y_pred)
-        r2 = r2_score(y_test, y_pred)
+        # Create model
+        self.model = GRUModel(
+            input_size=X_train.shape[2],
+            hidden_sizes=self.hidden_sizes,
+            dropout=self.dropout
+        ).to(self.device)
 
-        self.best_score = r2
+        # Loss and optimizer
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, patience=10, factor=0.5)
 
         logger.info(
-            f"GRU Neural Network - R² = {r2:.4f}, MSE = {mse:.4f}, MAE = {mae:.4f}")
+            f"Model created with {sum(p.numel() for p in self.model.parameters())} parameters")
+
+        # Training loop
+        best_val_loss = float('inf')
+        patience_counter = 0
+        patience = 20
+
+        for epoch in range(epochs):
+            # Training
+            self.model.train()
+            train_loss = 0.0
+            for batch_X, batch_y in train_loader:
+                optimizer.zero_grad()
+                outputs = self.model(batch_X).squeeze()
+                loss = criterion(outputs, batch_y)
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
+
+            # Validation
+            self.model.eval()
+            with torch.no_grad():
+                val_outputs = self.model(X_test_tensor).squeeze()
+                val_loss = criterion(val_outputs, y_test_tensor).item()
+
+            avg_train_loss = train_loss / len(train_loader)
+            self.training_history['train_loss'].append(avg_train_loss)
+            self.training_history['val_loss'].append(val_loss)
+
+            # Learning rate scheduling
+            scheduler.step(val_loss)
+
+            # Early stopping
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                patience_counter = 0
+                # Save best model
+                torch.save(self.model.state_dict(), 'best_model.pth')
+            else:
+                patience_counter += 1
+
+            if patience_counter >= patience:
+                logger.info(f"Early stopping at epoch {epoch+1}")
+                break
+
+            if (epoch + 1) % 10 == 0:
+                logger.info(
+                    f"Epoch {epoch+1}/{epochs}, Train Loss: {avg_train_loss:.6f}, Val Loss: {val_loss:.6f}")
+
+        # Load best model
+        self.model.load_state_dict(torch.load('best_model.pth'))
+
+        # Final evaluation
+        self.model.eval()
+        with torch.no_grad():
+            y_train_pred = self.model(X_train_tensor).squeeze().cpu().numpy()
+            y_test_pred = self.model(X_test_tensor).squeeze().cpu().numpy()
+
+        # Calculate metrics
+        train_mse = mean_squared_error(y_train, y_train_pred)
+        train_mae = mean_absolute_error(y_train, y_train_pred)
+        train_r2 = r2_score(y_train, y_train_pred)
+
+        test_mse = mean_squared_error(y_test, y_test_pred)
+        test_mae = mean_absolute_error(y_test, y_test_pred)
+        test_r2 = r2_score(y_test, y_test_pred)
+
+        self.best_score = test_r2
+
+        logger.info("Training Results:")
+        logger.info(
+            f"Train - MSE: {train_mse:.4f}, MAE: {train_mae:.4f}, R²: {train_r2:.4f}")
+        logger.info(
+            f"Test - MSE: {test_mse:.4f}, MAE: {test_mae:.4f}, R²: {test_r2:.4f}")
+
+        # Clean up
+        if os.path.exists('best_model.pth'):
+            os.remove('best_model.pth')
 
         return {
-            'gru_neural_network': {
-                'model': self.model,
-                'mse': mse,
-                'mae': mae,
-                'r2': r2
-            }
+            'train_mse': train_mse,
+            'train_mae': train_mae,
+            'train_r2': train_r2,
+            'test_mse': test_mse,
+            'test_mae': test_mae,
+            'test_r2': test_r2,
+            'training_history': self.training_history
         }
 
     def predict_next_price(self, features_df):
-        """Predict next day's gold price using pure GRU neural network"""
+        """Predict next day's gold price using GRU model"""
         if self.model is None:
             raise ValueError(
                 "Model not trained yet. Call train_model() first.")
@@ -467,18 +465,21 @@ class GoldPriceMLPredictor:
             raise ValueError(
                 f"Not enough data. Need at least {self.sequence_length} data points.")
 
-        # Create sequence features for prediction
-        X_pred, _ = self.create_sequence_features(features_df)
+        # Get latest sequence
+        latest_sequence = features_df[self.feature_columns].iloc[-self.sequence_length:].values
 
-        if X_pred.empty:
-            raise ValueError(
-                "Could not create sequence features for prediction")
+        # Scale the sequence
+        latest_sequence_scaled = self.scaler.transform(latest_sequence)
 
-        # Get the last sequence
-        latest_features = X_pred.iloc[-1:].values
+        # Convert to tensor and add batch dimension
+        latest_sequence_tensor = torch.FloatTensor(
+            latest_sequence_scaled).unsqueeze(0).to(self.device)
 
-        # Make prediction using GRU neural network
-        prediction = self.model.predict(latest_features)[0]
+        # Make prediction
+        self.model.eval()
+        with torch.no_grad():
+            prediction = self.model(
+                latest_sequence_tensor).squeeze().cpu().numpy()
 
         return prediction
 
@@ -488,43 +489,61 @@ class GoldPriceMLPredictor:
             return None
 
         return {
-            'model_type': 'Pure GRU Neural Network',
+            'model_type': 'PyTorch GRU',
             'sequence_length': self.sequence_length,
             'feature_count': len(self.feature_columns),
             'test_r2_score': self.best_score,
-            'hidden_layers': self.hidden_layers
+            'total_params': sum(p.numel() for p in self.model.parameters()),
+            'hidden_sizes': self.hidden_sizes,
+            'device': str(self.device)
         }
 
-    def save_model(self, filepath='gold_ml_model.pkl'):
-        """Save the trained GRU neural network model"""
+    def save_model(self, filepath='gold_gru_model.pkl'):
+        """Save the trained GRU model and scaler"""
         if self.model is None:
             raise ValueError("No model to save. Train the model first.")
 
         model_data = {
-            'model': self.model,
+            'model_state_dict': self.model.state_dict(),
+            'model_config': {
+                'input_size': len(self.feature_columns),
+                'hidden_sizes': self.hidden_sizes,
+                'dropout': self.dropout
+            },
+            'scaler': self.scaler,
             'feature_columns': self.feature_columns,
             'sequence_length': self.sequence_length,
-            'hidden_layers': self.hidden_layers,
             'best_score': self.best_score
         }
         joblib.dump(model_data, filepath)
-        logger.info(f"Pure GRU Neural Network model saved to {filepath}")
+        logger.info(f"GRU model saved to {filepath}")
 
-    def load_model(self, filepath='gold_ml_model.pkl'):
-        """Load a trained GRU neural network model"""
+    def load_model(self, filepath='gold_gru_model.pkl'):
+        """Load a trained GRU model"""
         model_data = joblib.load(filepath)
-        self.model = model_data['model']
+
+        # Recreate model
+        self.model = GRUModel(
+            input_size=model_data['model_config']['input_size'],
+            hidden_sizes=model_data['model_config']['hidden_sizes'],
+            dropout=model_data['model_config']['dropout']
+        ).to(self.device)
+
+        # Load state dict
+        self.model.load_state_dict(model_data['model_state_dict'])
+
+        # Load other attributes
+        self.scaler = model_data['scaler']
         self.feature_columns = model_data['feature_columns']
         self.sequence_length = model_data['sequence_length']
-        self.hidden_layers = model_data.get('hidden_layers', (128, 64, 32))
         self.best_score = model_data['best_score']
-        logger.info(f"Pure GRU Neural Network model loaded from {filepath}")
+
+        logger.info(f"GRU model loaded from {filepath}")
 
 
 def main():
-    """Main function to train and test the pure GRU neural network model"""
-    predictor = GoldPriceMLPredictor(
-        sequence_length=60, hidden_layers=(128, 64, 32))
+    """Main function to train and test the GRU model"""
+    predictor = GoldPriceGRUPredictor(sequence_length=60)
 
     # Fetch market data
     logger.info("Fetching market data...")
@@ -542,15 +561,15 @@ def main():
     logger.info("Preparing training data...")
     X, y = predictor.prepare_training_data(features_df)
 
-    if X.empty:
+    if X.size == 0:
         logger.error("No training data available")
         return
 
     logger.info(f"Training data shape: {X.shape}")
     logger.info(f"Number of features: {len(predictor.feature_columns)}")
 
-    # Train GRU-like model
-    logger.info("Training GRU-like model...")
+    # Train GRU model
+    logger.info("Training GRU model...")
     training_results = predictor.train_model(X, y, test_size=0.2)
 
     # Get model summary
