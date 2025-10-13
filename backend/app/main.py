@@ -10,8 +10,6 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import List
 import uvicorn
-from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import MinMaxScaler
 import sqlite3
 import os
 import time
