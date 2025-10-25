@@ -14,8 +14,8 @@ import sqlite3
 import os
 import time
 from contextlib import contextmanager
-from backend.models.ml_model import GoldPriceMLPredictor
-from backend.models.lasso_model import LassoGoldPredictor
+from models.lasso_model import LassoGoldPredictor
+from models.news_prediction import NewsEnhancedLassoPredictor, NewsSentimentAnalyzer
 
 # Set up logging - Optimized for performance
 logging.basicConfig(level=logging.WARNING)  # Reduced from INFO to WARNING
@@ -208,27 +208,31 @@ except:
     else:
         logger.error("Failed to fetch market data for Lasso model")
 
-# Initialize legacy ML predictor as fallback
-ml_predictor = GoldPriceMLPredictor()
+
+# Initialize News-Enhanced Lasso predictor
+news_enhanced_predictor = NewsEnhancedLassoPredictor()
 try:
-    ml_predictor.load_model(str(BACKEND_DIR / 'models/gold_ml_model.pkl'))
-    logger.info("Legacy ML model loaded successfully")
+    news_enhanced_predictor.load_enhanced_model(
+        str(BACKEND_DIR / 'models/enhanced_lasso_gold_model.pkl'))
+    logger.info("News-enhanced Lasso model loaded successfully")
 except:
-    logger.warning("Legacy ML model not found, will train new model")
-    # Train new model
-    market_data = ml_predictor.fetch_market_data()
+    logger.warning("News-enhanced Lasso model not found, will train new model")
+    # Train new enhanced model
+    market_data = news_enhanced_predictor.fetch_market_data() if hasattr(news_enhanced_predictor, 'fetch_market_data') else lasso_predictor.fetch_market_data()
     if market_data:
-        features_df = ml_predictor.create_fundamental_features(market_data)
-        X, y = ml_predictor.prepare_training_data(features_df)
-        if not X.empty:
-            ml_predictor.train_model(X, y)
-            ml_predictor.save_model(
-                str(BACKEND_DIR / 'models/gold_ml_model.pkl'))
-            logger.info("New legacy ML model trained and saved")
+        # Fetch news sentiment data
+        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(days_back=30)
+        # Create enhanced features
+        enhanced_features = news_enhanced_predictor.create_enhanced_features(market_data, sentiment_features)
+        if not enhanced_features.empty:
+            news_enhanced_predictor.train_enhanced_model(enhanced_features)
+            news_enhanced_predictor.save_enhanced_model(
+                str(BACKEND_DIR / 'models/enhanced_lasso_gold_model.pkl'))
+            logger.info("New news-enhanced Lasso model trained and saved")
         else:
-            logger.error("Failed to prepare training data for legacy ML model")
+            logger.error("Failed to prepare enhanced training data")
     else:
-        logger.error("Failed to fetch market data for legacy ML model")
+        logger.error("Failed to fetch market data for news-enhanced model")
 
 
 def init_database():
@@ -444,7 +448,7 @@ def get_ml_model_display_name():
     """Get the display name for the current ML model"""
     if lasso_predictor.model is not None:
         return "Lasso Regression"
-    elif ml_predictor.model is not None:
+    elif False:  # GRU model removed
         return "Legacy MLP Neural Network"
     else:
         return "No Model Available"
@@ -524,8 +528,8 @@ def get_accuracy_stats():
             r2_score = round(r2 * 100, 1)  # Convert to percentage
         else:
             # Fallback to training CV score if not enough recent data
-            if hasattr(ml_predictor, 'best_score') and ml_predictor.best_score is not None:
-                r2_score = round(ml_predictor.best_score * 100, 1)
+            # GRU model removed
+            r2_score = 0.0
     except:
         r2_score = 0.0
 
@@ -1073,23 +1077,9 @@ def predict_next_day_price_ml():
             logger.info(f"Lasso Regression prediction: ${predicted_price:.2f}")
             return round(predicted_price, 2)
 
-        # Fallback to legacy ML model
-        elif ml_predictor.model is not None:
-            # Get fresh market data
-            market_data = ml_predictor.fetch_market_data()
-            if not market_data:
-                logger.error(
-                    "Failed to fetch market data for legacy ML prediction")
-                return None
-
-            # Create features
-            features_df = ml_predictor.create_fundamental_features(market_data)
-
-            # Make prediction
-            predicted_price = ml_predictor.predict_next_price(features_df)
-
-            logger.info(f"Legacy ML prediction: ${predicted_price:.2f}")
-            return round(predicted_price, 2)
+        # Fallback to legacy ML model - REMOVED
+        elif False:  # GRU model removed
+            return None
         else:
             logger.error("No trained models available")
             return None
@@ -1103,7 +1093,7 @@ def generate_prediction_explanation():
     """Get simplified prediction information without detailed market analysis"""
     try:
         # Get fresh market data
-        market_data = ml_predictor.fetch_market_data()
+        market_data = lasso_predictor.fetch_market_data()
         if not market_data:
             return {"error": "Failed to fetch market data"}
 
@@ -1241,7 +1231,177 @@ def get_xauusd_daily_data():
 
 @app.get("/")
 async def root():
-    return {"message": "XAU/USD Real-time Data API", "status": "running"}
+    return {"message": "XAU/USD Real-time Data API with News Sentiment Analysis", "status": "running"}
+
+
+@app.get("/xauusd/news-sentiment")
+async def get_news_sentiment():
+    """Get current news sentiment analysis for gold"""
+    try:
+        # Fetch and analyze news
+        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(days_back=7)
+        
+        if sentiment_features.empty:
+            return {
+                "status": "error",
+                "message": "No news sentiment data available",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Get latest sentiment data
+        latest_sentiment = sentiment_features.iloc[-1]
+        
+        return {
+            "status": "success",
+            "sentiment_data": {
+                "date": latest_sentiment.get('date', ''),
+                "combined_sentiment": round(float(latest_sentiment.get('combined_sentiment_mean', 0)), 4),
+                "news_volume": int(latest_sentiment.get('news_count', 0)),
+                "sentiment_trend": round(float(latest_sentiment.get('sentiment_trend', 0)), 4),
+                "sentiment_volatility": round(float(latest_sentiment.get('sentiment_volatility', 0)), 4),
+                "polarity_mean": round(float(latest_sentiment.get('polarity_mean', 0)), 4),
+                "gold_sentiment": round(float(latest_sentiment.get('gold_sentiment_mean', 0)), 4)
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error fetching news sentiment: {e}")
+        return {
+            "status": "error",
+            "message": f"Error fetching news sentiment: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@app.get("/xauusd/enhanced-prediction")
+async def get_enhanced_prediction():
+    """Get gold price prediction using news-enhanced Lasso regression"""
+    try:
+        # Get market data
+        market_data = lasso_predictor.fetch_market_data()
+        if not market_data:
+            return {
+                "status": "error",
+                "message": "Failed to fetch market data",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Fetch news sentiment
+        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(days_back=7)
+        
+        # Create enhanced features
+        enhanced_features = news_enhanced_predictor.create_enhanced_features(market_data, sentiment_features)
+        
+        if enhanced_features.empty:
+            return {
+                "status": "error",
+                "message": "Failed to create enhanced features",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Make prediction
+        prediction = news_enhanced_predictor.predict_with_news(enhanced_features)
+        current_price = enhanced_features['gold_close'].iloc[-1]
+        change = prediction - current_price
+        change_pct = (change / current_price) * 100
+        
+        # Get feature importance
+        feature_importance = news_enhanced_predictor.get_feature_importance()
+        top_features = feature_importance.head(10).to_dict('records') if not feature_importance.empty else []
+        
+        # Get sentiment summary
+        sentiment_summary = {}
+        if not sentiment_features.empty:
+            latest_sentiment = sentiment_features.iloc[-1]
+            sentiment_summary = {
+                "combined_sentiment": round(float(latest_sentiment.get('combined_sentiment_mean', 0)), 4),
+                "news_volume": int(latest_sentiment.get('news_count', 0)),
+                "sentiment_trend": round(float(latest_sentiment.get('sentiment_trend', 0)), 4)
+            }
+        
+        return {
+            "status": "success",
+            "prediction": {
+                "current_price": round(current_price, 2),
+                "predicted_price": round(prediction, 2),
+                "predicted_change": round(change, 2),
+                "predicted_change_percentage": round(change_pct, 2),
+                "model_type": "News-Enhanced Lasso Regression",
+                "model_accuracy": round(news_enhanced_predictor.best_score, 4) if news_enhanced_predictor.best_score > -np.inf else None
+            },
+            "sentiment_analysis": sentiment_summary,
+            "feature_importance": top_features,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error making enhanced prediction: {e}")
+        return {
+            "status": "error",
+            "message": f"Error making enhanced prediction: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@app.get("/xauusd/compare-models")
+async def compare_models():
+    """Compare predictions from different models including news-enhanced"""
+    try:
+        # Get market data
+        market_data = lasso_predictor.fetch_market_data()
+        if not market_data:
+            return {
+                "status": "error",
+                "message": "Failed to fetch market data",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Get current price
+        current_price = market_data['gold']['Close'].iloc[-1]
+        
+        # Lasso prediction
+        lasso_features = lasso_predictor.create_fundamental_features(market_data)
+        lasso_prediction = lasso_predictor.predict_next_price(lasso_features)
+        lasso_change = lasso_prediction - current_price
+        lasso_change_pct = (lasso_change / current_price) * 100
+        
+        # News-enhanced prediction
+        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(days_back=7)
+        enhanced_features = news_enhanced_predictor.create_enhanced_features(market_data, sentiment_features)
+        enhanced_prediction = news_enhanced_predictor.predict_with_news(enhanced_features)
+        enhanced_change = enhanced_prediction - current_price
+        enhanced_change_pct = (enhanced_change / current_price) * 100
+        
+        # Legacy ML prediction - REMOVED (GRU model)
+        
+        return {
+            "status": "success",
+            "current_price": round(current_price, 2),
+            "predictions": {
+                "lasso_regression": {
+                    "predicted_price": round(lasso_prediction, 2),
+                    "predicted_change": round(lasso_change, 2),
+                    "predicted_change_percentage": round(lasso_change_pct, 2),
+                    "model_accuracy": round(lasso_predictor.best_score, 4) if lasso_predictor.best_score > -np.inf else None
+                },
+                "news_enhanced_lasso": {
+                    "predicted_price": round(enhanced_prediction, 2),
+                    "predicted_change": round(enhanced_change, 2),
+                    "predicted_change_percentage": round(enhanced_change_pct, 2),
+                    "model_accuracy": round(news_enhanced_predictor.best_score, 4) if news_enhanced_predictor.best_score > -np.inf else None
+                },
+                # Legacy ML model removed
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error comparing models: {e}")
+        return {
+            "status": "error",
+            "message": f"Error comparing models: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @app.get("/xauusd")
