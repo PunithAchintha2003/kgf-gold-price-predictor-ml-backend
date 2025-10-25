@@ -17,9 +17,20 @@ from contextlib import contextmanager
 from models.lasso_model import LassoGoldPredictor
 from models.news_prediction import NewsEnhancedLassoPredictor, NewsSentimentAnalyzer
 
-# Set up logging - Optimized for performance
-logging.basicConfig(level=logging.WARNING)  # Reduced from INFO to WARNING
+# Environment configuration
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "WARNING")
+CACHE_DURATION = int(os.getenv("CACHE_DURATION", "300"))
+API_COOLDOWN = int(os.getenv("API_COOLDOWN", "2"))
+REALTIME_CACHE_DURATION = int(os.getenv("REALTIME_CACHE_DURATION", "60"))
+
+# Set up logging based on environment
+log_level = getattr(logging, LOG_LEVEL.upper(), logging.WARNING)
+logging.basicConfig(level=log_level)
 logger = logging.getLogger(__name__)
+
+# Log environment info
+logger.info(f"Starting app in {ENVIRONMENT} environment with log level {LOG_LEVEL}")
 
 
 # Paths relative to backend directory
@@ -53,12 +64,12 @@ def get_db_connection(db_path=DB_PATH):
 # Optimized cache for market data to reduce API calls
 _market_data_cache = {}
 _cache_timestamp = None
-CACHE_DURATION = 300  # 5 minutes - increased for better performance
+# CACHE_DURATION is now set from environment variables above
 _last_api_call = 0
-API_COOLDOWN = 2  # 2 seconds between API calls - increased for stability
+# API_COOLDOWN is now set from environment variables above
 _realtime_cache = {}
 _realtime_cache_timestamp = None
-REALTIME_CACHE_DURATION = 60  # 1 minute for real-time data
+# REALTIME_CACHE_DURATION is now set from environment variables above
 
 
 def get_cached_market_data():
@@ -891,7 +902,11 @@ def cleanup_invalid_predictions():
 init_database()
 init_backup_database()
 
-app = FastAPI(title="XAU/USD Real-time Data API", version="1.0.0")
+app = FastAPI(
+    title="XAU/USD Real-time Data API", 
+    version="1.0.0",
+    description=f"Gold price prediction API running in {ENVIRONMENT} environment"
+)
 
 # Add CORS middleware to allow Streamlit frontend to connect
 app.add_middleware(
@@ -910,7 +925,11 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "service": "XAU/USD Real-time Data API",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "environment": ENVIRONMENT,
+        "log_level": LOG_LEVEL,
+        "cache_duration": CACHE_DURATION,
+        "api_cooldown": API_COOLDOWN
     }
 
 
