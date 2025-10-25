@@ -13,30 +13,56 @@ import uvicorn
 import sqlite3
 import os
 import time
+from contextlib import contextmanager
 from backend.models.ml_model import GoldPriceMLPredictor
 from backend.models.lasso_model import LassoGoldPredictor
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+# Set up logging - Optimized for performance
+logging.basicConfig(level=logging.WARNING)  # Reduced from INFO to WARNING
 logger = logging.getLogger(__name__)
 
 
 # Paths relative to backend directory
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-# Database setup
+# Database setup - Optimized
 DB_PATH = str(BACKEND_DIR / "data/gold_predictions.db")
 BACKUP_DB_PATH = str(BACKEND_DIR / "data/gold_predictions_backup.db")
 
-# Cache for market data to reduce API calls
+# Database connection context manager for better performance
+
+
+@contextmanager
+def get_db_connection(db_path=DB_PATH):
+    """Context manager for database connections - Optimized"""
+    conn = None
+    try:
+        conn = sqlite3.connect(db_path, timeout=30.0)
+        conn.execute("PRAGMA journal_mode=WAL")  # Better performance
+        conn.execute("PRAGMA synchronous=NORMAL")  # Faster writes
+        conn.execute("PRAGMA cache_size=10000")  # Larger cache
+        yield conn
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise e
+    finally:
+        if conn:
+            conn.close()
+
+
+# Optimized cache for market data to reduce API calls
 _market_data_cache = {}
 _cache_timestamp = None
-CACHE_DURATION = 30  # 30 seconds for more real-time updates
+CACHE_DURATION = 300  # 5 minutes - increased for better performance
 _last_api_call = 0
-API_COOLDOWN = 1  # 1 second between API calls
+API_COOLDOWN = 2  # 2 seconds between API calls - increased for stability
+_realtime_cache = {}
+_realtime_cache_timestamp = None
+REALTIME_CACHE_DURATION = 60  # 1 minute for real-time data
 
 
 def get_cached_market_data():
-    """Get cached market data or fetch new data if cache is expired"""
+    """Get cached market data or fetch new data if cache is expired - Optimized"""
     global _market_data_cache, _cache_timestamp, _last_api_call
 
     now = datetime.now()
@@ -49,7 +75,7 @@ def get_cached_market_data():
         if current_time - _last_api_call < API_COOLDOWN:
             time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
-        # Try multiple symbols for better reliability
+        # Try multiple symbols for better reliability - Optimized order
         symbols_to_try = ["GC=F", "GLD", "GOLD"]
         hist = None
 
@@ -59,82 +85,104 @@ def get_cached_market_data():
                 gold = yf.Ticker(symbol)
                 hist = gold.history(period="1mo", interval="1d")
                 if not hist.empty:
-                    logger.info(f"Successfully fetched data using {symbol}")
+                    # Reduced logging for performance
                     _market_data_cache = {'hist': hist, 'symbol': symbol}
                     _cache_timestamp = now
                     break
             except Exception as e:
-                logger.warning(f"Failed to fetch data from {symbol}: {e}")
+                # Only log errors, not warnings for better performance
+                if symbol == symbols_to_try[-1]:  # Only log on last attempt
+                    logger.error(f"All gold data sources failed: {e}")
                 continue
 
         if hist is None or hist.empty:
-            logger.error("All gold data sources failed")
             return None, None
 
     return _market_data_cache.get('hist'), _market_data_cache.get('symbol')
 
 
 def get_realtime_price_data():
-    """Get real-time price data bypassing cache for immediate updates"""
-    global _last_api_call
-    try:
-        # Rate limiting: wait if we made a call recently
-        current_time = time.time()
-        if current_time - _last_api_call < API_COOLDOWN:
-            time.sleep(API_COOLDOWN - (current_time - _last_api_call))
+    """Get real-time price data with optimized caching - Performance optimized"""
+    global _last_api_call, _realtime_cache, _realtime_cache_timestamp
 
-        # Try multiple symbols for better reliability
-        symbols_to_try = ["GC=F", "GLD", "GOLD"]
+    # Check cache first
+    now = datetime.now()
+    if (_realtime_cache_timestamp is None or
+        (now - _realtime_cache_timestamp).total_seconds() > REALTIME_CACHE_DURATION or
+            not _realtime_cache):
 
-        for symbol in symbols_to_try:
-            try:
-                _last_api_call = time.time()
-                gold = yf.Ticker(symbol)
-                # Get very recent data with 1-minute intervals for real-time feel
-                hist = gold.history(period="1d", interval="1m")
+        try:
+            # Rate limiting: wait if we made a call recently
+            current_time = time.time()
+            if current_time - _last_api_call < API_COOLDOWN:
+                time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
-                if not hist.empty:
-                    current_price = float(hist['Close'].iloc[-1])
-                    # Calculate price change from previous close
-                    if len(hist) > 1:
-                        prev_close = float(hist['Close'].iloc[-2])
-                        price_change = current_price - prev_close
-                        change_percentage = (price_change / prev_close) * 100
-                    else:
-                        price_change = 0
-                        change_percentage = 0
+            # Try multiple symbols for better reliability - Optimized
+            symbols_to_try = ["GC=F", "GLD", "GOLD"]
 
-                    return {
-                        'current_price': round(current_price, 2),
-                        'price_change': round(price_change, 2),
-                        'change_percentage': round(change_percentage, 2),
-                        'last_updated': hist.index[-1].strftime('%Y-%m-%d %H:%M:%S'),
-                        'symbol': symbol,
-                        'timestamp': datetime.now().isoformat()
-                    }
-            except Exception as e:
-                logger.warning(
-                    f"Failed to fetch real-time data from {symbol}: {e}")
-                continue
+            for symbol in symbols_to_try:
+                try:
+                    _last_api_call = time.time()
+                    gold = yf.Ticker(symbol)
+                    # Get very recent data with 1-minute intervals for real-time feel
+                    hist = gold.history(period="1d", interval="1m")
 
-        # Fallback to cached data if real-time fails
-        hist, symbol = get_cached_market_data()
-        if hist is not None and not hist.empty:
-            current_price = float(hist['Close'].iloc[-1])
-            return {
-                'current_price': round(current_price, 2),
-                'price_change': None,
-                'change_percentage': None,
-                'last_updated': None,
-                'symbol': symbol,
-                'timestamp': datetime.now().isoformat()
-            }
+                    if not hist.empty:
+                        current_price = float(hist['Close'].iloc[-1])
+                        # Calculate price change from previous close
+                        if len(hist) > 1:
+                            prev_close = float(hist['Close'].iloc[-2])
+                            price_change = current_price - prev_close
+                            change_percentage = (
+                                price_change / prev_close) * 100
+                        else:
+                            price_change = 0
+                            change_percentage = 0
 
-        return None
+                        result = {
+                            'current_price': round(current_price, 2),
+                            'price_change': round(price_change, 2),
+                            'change_percentage': round(change_percentage, 2),
+                            'last_updated': hist.index[-1].strftime('%Y-%m-%d %H:%M:%S'),
+                            'symbol': symbol,
+                            'timestamp': datetime.now().isoformat()
+                        }
 
-    except Exception as e:
-        logger.error(f"Error fetching real-time price data: {e}")
-        return None
+                        # Cache the result
+                        _realtime_cache = result
+                        _realtime_cache_timestamp = now
+                        return result
+
+                except Exception as e:
+                    # Only log on last attempt for performance
+                    if symbol == symbols_to_try[-1]:
+                        logger.error(f"Failed to fetch real-time data: {e}")
+                    continue
+
+            # Fallback to cached data if real-time fails
+            hist, symbol = get_cached_market_data()
+            if hist is not None and not hist.empty:
+                current_price = float(hist['Close'].iloc[-1])
+                result = {
+                    'current_price': round(current_price, 2),
+                    'price_change': None,
+                    'change_percentage': None,
+                    'last_updated': None,
+                    'symbol': symbol,
+                    'timestamp': datetime.now().isoformat()
+                }
+                _realtime_cache = result
+                _realtime_cache_timestamp = now
+                return result
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error fetching real-time price data: {e}")
+            return None
+    else:
+        # Return cached data
+        return _realtime_cache
 
 
 # Initialize Lasso Regression predictor (primary model)
@@ -184,61 +232,76 @@ except:
 
 
 def init_database():
-    """Initialize SQLite database for storing predictions"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    """Initialize SQLite database for storing predictions - Optimized"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
 
-    # Create predictions table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS predictions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            prediction_date TEXT NOT NULL,
-            predicted_price REAL NOT NULL,
-            actual_price REAL,
-            accuracy_percentage REAL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+        # Create predictions table with optimized indexes
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prediction_date TEXT NOT NULL,
+                predicted_price REAL NOT NULL,
+                actual_price REAL,
+                accuracy_percentage REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
-    # Create historical data table for ghost line
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS historical_predictions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT NOT NULL,
-            predicted_price REAL NOT NULL,
-            actual_price REAL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+        # Create historical data table for ghost line
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS historical_predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                predicted_price REAL NOT NULL,
+                actual_price REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
-    conn.commit()
-    conn.close()
-    logger.info("Database initialized successfully")
+        # Create indexes for better performance
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_prediction_date ON predictions(prediction_date)
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_created_at ON predictions(created_at)
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_actual_price ON predictions(actual_price)
+        ''')
+
+        conn.commit()
 
 
 def init_backup_database():
-    """Initialize backup SQLite database for storing predictions"""
-    conn = sqlite3.connect(BACKUP_DB_PATH)
-    cursor = conn.cursor()
+    """Initialize backup SQLite database for storing predictions - Optimized"""
+    with get_db_connection(BACKUP_DB_PATH) as conn:
+        cursor = conn.cursor()
 
-    # Create predictions table with same structure plus backup timestamp
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS predictions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            prediction_date TEXT NOT NULL,
-            predicted_price REAL NOT NULL,
-            actual_price REAL,
-            accuracy_percentage REAL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            backup_created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+        # Create predictions table with same structure plus backup timestamp
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS predictions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prediction_date TEXT NOT NULL,
+                predicted_price REAL NOT NULL,
+                actual_price REAL,
+                accuracy_percentage REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                backup_created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
-    conn.commit()
-    conn.close()
-    logger.info("Backup database initialized successfully")
+        # Create indexes for backup database too
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_backup_prediction_date ON predictions(prediction_date)
+        ''')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_backup_created_at ON predictions(created_at)
+        ''')
+
+        conn.commit()
 
 
 def backup_predictions():
@@ -328,49 +391,47 @@ def restore_from_backup():
 
 
 def save_prediction(prediction_date, predicted_price, actual_price=None):
-    """Save prediction to database with correct accuracy calculation"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    """Save prediction to database with correct accuracy calculation - Optimized"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
 
-    # Calculate accuracy if actual price is available (accuracy = 100 - error_percentage)
-    accuracy = None
-    if actual_price:
-        error_percentage = abs(
-            predicted_price - actual_price) / actual_price * 100
-        # Accuracy - higher is better
-        accuracy = max(0, 100 - error_percentage)
+        # Calculate accuracy if actual price is available (accuracy = 100 - error_percentage)
+        accuracy = None
+        if actual_price:
+            error_percentage = abs(
+                predicted_price - actual_price) / actual_price * 100
+            # Accuracy - higher is better
+            accuracy = max(0, 100 - error_percentage)
 
-    cursor.execute('''
-        INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage)
-        VALUES (?, ?, ?, ?)
-    ''', (prediction_date, predicted_price, actual_price, accuracy))
+        cursor.execute('''
+            INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage)
+            VALUES (?, ?, ?, ?)
+        ''', (prediction_date, predicted_price, actual_price, accuracy))
 
-    conn.commit()
-    conn.close()
+        conn.commit()
 
     # Automatically backup after saving
     backup_predictions()
 
 
 def get_historical_predictions(days=30):
-    """Get historical predictions for ghost line - all predictions including future ones"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    """Get historical predictions for ghost line - all predictions including future ones - Optimized"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute('''
-        SELECT prediction_date, predicted_price, actual_price
-        FROM predictions p1
-        WHERE prediction_date >= date('now', '-{} days')
-        AND p1.created_at = (
-            SELECT MAX(p2.created_at)
-            FROM predictions p2
-            WHERE p2.prediction_date = p1.prediction_date
-        )
-        ORDER BY prediction_date
-    '''.format(days))
+        cursor.execute('''
+            SELECT prediction_date, predicted_price, actual_price
+            FROM predictions p1
+            WHERE prediction_date >= date('now', '-{} days')
+            AND p1.created_at = (
+                SELECT MAX(p2.created_at)
+                FROM predictions p2
+                WHERE p2.prediction_date = p1.prediction_date
+            )
+            ORDER BY prediction_date
+        '''.format(days))
 
-    results = cursor.fetchall()
-    conn.close()
+        results = cursor.fetchall()
 
     return [{
         'date': row[0],
@@ -935,6 +996,32 @@ async def debug_realtime():
         }
 
 
+@app.get("/performance")
+async def get_performance_stats():
+    """Performance monitoring endpoint - New"""
+    try:
+        return {
+            "status": "success",
+            "cache_info": {
+                "market_data_cached": bool(_market_data_cache),
+                "cache_age_seconds": (datetime.now() - _cache_timestamp).total_seconds() if _cache_timestamp else None,
+                "realtime_cached": bool(_realtime_cache),
+                "realtime_cache_age_seconds": (datetime.now() - _realtime_cache_timestamp).total_seconds() if _realtime_cache_timestamp else None
+            },
+            "websocket_connections": len(manager.active_connections),
+            "cache_duration": CACHE_DURATION,
+            "realtime_cache_duration": REALTIME_CACHE_DURATION,
+            "api_cooldown": API_COOLDOWN,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Error getting performance stats: {e}",
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -1277,10 +1364,11 @@ async def get_exchange_rate(from_currency: str, to_currency: str):
 
 @app.websocket("/ws/xauusd")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for XAU/USD real-time data updates"""
+    """WebSocket endpoint for XAU/USD real-time data updates - Optimized"""
     await manager.connect(websocket)
 
     try:
+        last_sent_data = None
         while True:
             # Get real-time price data
             realtime_data = get_realtime_price_data()
@@ -1302,11 +1390,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Fallback to regular daily data if real-time fails
                 daily_data = get_xauusd_daily_data()
 
-            # Send to client
-            await manager.send_personal_message(json.dumps(daily_data), websocket)
+            # Only send if data has changed to reduce unnecessary updates
+            if daily_data != last_sent_data:
+                await manager.send_personal_message(json.dumps(daily_data), websocket)
+                last_sent_data = daily_data
 
-            # Wait 5 seconds before next update for real-time feel
-            await asyncio.sleep(5)
+            # Increased interval for better performance - 10 seconds instead of 5
+            await asyncio.sleep(10)
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
@@ -1316,28 +1406,31 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 async def broadcast_daily_data():
-    """Background task to broadcast daily data to all connected clients"""
+    """Background task to broadcast daily data to all connected clients - Optimized"""
+    last_broadcast_data = None
     while True:
         if manager.active_connections:
             daily_data = get_xauusd_daily_data()
-            await manager.broadcast(json.dumps(daily_data))
-        # Update data every 2 seconds for real-time feel
-        await asyncio.sleep(2)
+            # Only broadcast if data has changed to reduce unnecessary updates
+            if daily_data != last_broadcast_data:
+                await manager.broadcast(json.dumps(daily_data))
+                last_broadcast_data = daily_data
+        # Increased interval for better performance - 5 seconds instead of 2
+        await asyncio.sleep(5)
 
 
 async def continuous_accuracy_updates():
-    """Background task to continuously update accuracy every 10 minutes"""
+    """Background task to continuously update accuracy - Optimized"""
     while True:
         try:
-            logger.info("Running continuous accuracy update...")
+            # Reduced logging for performance
             update_actual_prices_realtime()
             update_same_day_predictions()
-            logger.info("Continuous accuracy update completed")
         except Exception as e:
             logger.error(f"Error in continuous accuracy update: {e}")
 
-        # Update accuracy every 10 minutes
-        await asyncio.sleep(600)  # 10 minutes
+        # Increased interval for better performance - 15 minutes instead of 10
+        await asyncio.sleep(900)  # 15 minutes
 
 
 @app.on_event("startup")
