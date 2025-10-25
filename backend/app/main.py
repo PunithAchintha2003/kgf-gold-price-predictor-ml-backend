@@ -14,6 +14,7 @@ import sqlite3
 import os
 import time
 from backend.models.ml_model import GoldPriceMLPredictor
+from backend.models.lasso_model import LassoGoldPredictor
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -136,13 +137,36 @@ def get_realtime_price_data():
         return None
 
 
-# Initialize ML predictor
+# Initialize Lasso Regression predictor (primary model)
+lasso_predictor = LassoGoldPredictor()
+try:
+    lasso_predictor.load_model(
+        str(BACKEND_DIR / 'models/lasso_gold_model.pkl'))
+    logger.info("Lasso Regression model loaded successfully")
+except:
+    logger.warning("Lasso Regression model not found, will train new model")
+    # Train new Lasso model
+    market_data = lasso_predictor.fetch_market_data()
+    if market_data:
+        features_df = lasso_predictor.create_fundamental_features(market_data)
+        X, y = lasso_predictor.prepare_training_data(features_df)
+        if not X.empty:
+            lasso_predictor.train_model(X, y)
+            lasso_predictor.save_model(
+                str(BACKEND_DIR / 'models/lasso_gold_model.pkl'))
+            logger.info("New Lasso Regression model trained and saved")
+        else:
+            logger.error("Failed to prepare training data for Lasso model")
+    else:
+        logger.error("Failed to fetch market data for Lasso model")
+
+# Initialize legacy ML predictor as fallback
 ml_predictor = GoldPriceMLPredictor()
 try:
     ml_predictor.load_model(str(BACKEND_DIR / 'models/gold_ml_model.pkl'))
-    logger.info("ML model loaded successfully")
+    logger.info("Legacy ML model loaded successfully")
 except:
-    logger.warning("ML model not found, will train new model")
+    logger.warning("Legacy ML model not found, will train new model")
     # Train new model
     market_data = ml_predictor.fetch_market_data()
     if market_data:
@@ -152,11 +176,11 @@ except:
             ml_predictor.train_model(X, y)
             ml_predictor.save_model(
                 str(BACKEND_DIR / 'models/gold_ml_model.pkl'))
-            logger.info("New ML model trained and saved")
+            logger.info("New legacy ML model trained and saved")
         else:
-            logger.error("Failed to prepare training data for ML model")
+            logger.error("Failed to prepare training data for legacy ML model")
     else:
-        logger.error("Failed to fetch market data for ML model")
+        logger.error("Failed to fetch market data for legacy ML model")
 
 
 def init_database():
@@ -357,7 +381,12 @@ def get_historical_predictions(days=30):
 
 def get_ml_model_display_name():
     """Get the display name for the current ML model"""
-    return "Pure GRU Neural Network"
+    if lasso_predictor.model is not None:
+        return "Lasso Regression"
+    elif ml_predictor.model is not None:
+        return "Legacy MLP Neural Network"
+    else:
+        return "No Model Available"
 
 
 def get_accuracy_stats():
@@ -936,22 +965,47 @@ manager = ConnectionManager()
 
 
 def predict_next_day_price_ml():
-    """Predict next day price using Machine Learning approach"""
+    """Predict next day price using Lasso Regression model"""
     try:
-        # Get fresh market data
-        market_data = ml_predictor.fetch_market_data()
-        if not market_data:
-            logger.error("Failed to fetch market data for ML prediction")
+        # Try Lasso Regression model first
+        if lasso_predictor.model is not None:
+            # Get fresh market data
+            market_data = lasso_predictor.fetch_market_data()
+            if not market_data:
+                logger.error(
+                    "Failed to fetch market data for Lasso prediction")
+                return None
+
+            # Create features
+            features_df = lasso_predictor.create_fundamental_features(
+                market_data)
+
+            # Make prediction using Lasso Regression
+            predicted_price = lasso_predictor.predict_next_price(features_df)
+
+            logger.info(f"Lasso Regression prediction: ${predicted_price:.2f}")
+            return round(predicted_price, 2)
+
+        # Fallback to legacy ML model
+        elif ml_predictor.model is not None:
+            # Get fresh market data
+            market_data = ml_predictor.fetch_market_data()
+            if not market_data:
+                logger.error(
+                    "Failed to fetch market data for legacy ML prediction")
+                return None
+
+            # Create features
+            features_df = ml_predictor.create_fundamental_features(market_data)
+
+            # Make prediction
+            predicted_price = ml_predictor.predict_next_price(features_df)
+
+            logger.info(f"Legacy ML prediction: ${predicted_price:.2f}")
+            return round(predicted_price, 2)
+        else:
+            logger.error("No trained models available")
             return None
-
-        # Create features
-        features_df = ml_predictor.create_fundamental_features(market_data)
-
-        # Make prediction
-        predicted_price = ml_predictor.predict_next_price(features_df)
-
-        logger.info(f"ML prediction: ${predicted_price:.2f}")
-        return round(predicted_price, 2)
 
     except Exception as e:
         logger.error(f"Error in ML prediction: {e}")
@@ -1194,14 +1248,8 @@ def get_xauusd_daily_data():
             next_day = (hist.index[-1] + timedelta(days=1)
                         ).strftime("%Y-%m-%d")
 
-            # Make predictions more frequently (every 2 hours for continuous updates)
-            current_hour = datetime.now().hour
-            current_minute = datetime.now().minute
-            should_make_prediction = (
-                not prediction_exists_for_date(next_day) or
-                # Every 2 hours, within first 5 minutes
-                (current_hour % 2 == 0 and current_minute < 5)
-            )
+            # Make predictions if none exists for the next day
+            should_make_prediction = not prediction_exists_for_date(next_day)
 
             predicted_price = None
             if should_make_prediction:
