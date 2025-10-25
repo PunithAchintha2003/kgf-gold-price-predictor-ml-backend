@@ -1,6 +1,6 @@
 # KGF Gold Price Predictor - ML Backend
 
-A production-ready FastAPI backend service for XAU/USD (Gold) price prediction using advanced machine learning models. Features real-time data streaming, ML predictions, and comprehensive market analysis.
+A production-ready FastAPI backend service for XAU/USD (Gold) price prediction using advanced machine learning models. Features real-time data streaming, ML predictions, and price information services.
 
 ## 🎯 Project Status
 
@@ -40,7 +40,7 @@ python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 - **AI Price Prediction**: Next-day gold price predictions using Lasso Regression ML model
 - **High Accuracy**: 99.17% prediction accuracy based on recent evaluations
 - **Real-time Data**: Live XAU/USD price updates every 2 seconds via WebSocket
-- **Market Analysis**: Comprehensive prediction explanations with 5 key market factors
+- **Price Information**: Current gold price data and basic market information
 - **Historical Tracking**: SQLite database storing all predictions and accuracy metrics
 
 ### API & Data Services
@@ -237,14 +237,14 @@ npm run preview
 
 ### REST API Endpoints
 
-| Method | Endpoint                     | Description                                | Response                                                         |
-| ------ | ---------------------------- | ------------------------------------------ | ---------------------------------------------------------------- |
-| `GET`  | `/`                          | Health check endpoint                      | `{"message": "XAU/USD Real-time Data API", "status": "running"}` |
-| `GET`  | `/xauusd`                    | Daily XAU/USD data with AI prediction      | Historical data + prediction                                     |
-| `GET`  | `/xauusd/realtime`           | Real-time current price (2s updates)       | Current price data                                               |
-| `GET`  | `/xauusd/explanation`        | Prediction explanation with market factors | Detailed analysis                                                |
-| `GET`  | `/exchange-rate/{from}/{to}` | Currency exchange rates                    | Exchange rate data                                               |
-| `GET`  | `/docs`                      | Interactive API documentation              | Swagger UI                                                       |
+| Method | Endpoint                     | Description                           | Response                                                         |
+| ------ | ---------------------------- | ------------------------------------- | ---------------------------------------------------------------- |
+| `GET`  | `/`                          | Health check endpoint                 | `{"message": "XAU/USD Real-time Data API", "status": "running"}` |
+| `GET`  | `/xauusd`                    | Daily XAU/USD data with AI prediction | Historical data + prediction                                     |
+| `GET`  | `/xauusd/realtime`           | Real-time current price (2s updates)  | Current price data                                               |
+| `GET`  | `/xauusd/explanation`        | Current price information             | Basic price data                                                 |
+| `GET`  | `/exchange-rate/{from}/{to}` | Currency exchange rates               | Exchange rate data                                               |
+| `GET`  | `/docs`                      | Interactive API documentation         | Swagger UI                                                       |
 
 ### WebSocket Endpoints
 
@@ -307,26 +307,11 @@ npm run preview
 
 #### Prediction Explanation (`/xauusd/explanation`)
 
+**Note**: This endpoint has been simplified to provide basic price information only.
+
 ```json
 {
   "current_price": 3912.1,
-  "overall_sentiment": "Bullish",
-  "sentiment_explanation": "Most factors suggest gold prices may rise",
-  "factors": [
-    {
-      "factor": "💵 US Dollar Strength",
-      "value": "$104.25 (-0.8%)",
-      "interpretation": "Weak dollar makes gold cheaper for international buyers",
-      "impact": "Bullish",
-      "confidence": "High"
-    }
-  ],
-  "summary": {
-    "bullish_factors": 3,
-    "bearish_factors": 1,
-    "neutral_factors": 1,
-    "total_factors": 5
-  },
   "timestamp": "2025-10-04T03:21:51.669527",
   "status": "success"
 }
@@ -337,18 +322,10 @@ npm run preview
 ### Lasso Regression Model
 
 - **Algorithm**: Lasso Regression (L1 regularization)
-- **Features**: 5 key market factors including USD strength, interest rates, VIX, technical indicators, and oil prices
+- **Features**: Market data analysis for price prediction
 - **Accuracy**: 99.17% based on recent predictions
 - **Training**: Automated retraining with new market data
 - **Prediction Window**: Next-day price predictions
-
-### Market Analysis Factors
-
-1. **💵 US Dollar Strength (DXY)**: Most important factor affecting gold prices
-2. **📈 Interest Rates (Treasury Yields)**: Bond yields vs gold attractiveness
-3. **😰 Market Fear (VIX)**: Volatility index indicating market sentiment
-4. **📊 Gold Technicals (RSI)**: Technical analysis indicators
-5. **🛢️ Inflation Pressure (Oil Prices)**: Commodity price impact on gold
 
 ## 🔧 Technical Details
 
@@ -389,22 +366,7 @@ npm run preview
 
 ## 🧠 Machine Learning Approach
 
-The prediction model uses Lasso Regression with 5 key market factors to predict next-day gold prices:
-
-### Key Features Analyzed:
-
-1. **💵 US Dollar Strength (DXY)**: Most influential factor - weak dollar supports gold prices
-2. **📈 Interest Rates (Treasury Yields)**: Higher rates make bonds more attractive than gold
-3. **😰 Market Fear (VIX)**: High volatility drives investors to safe haven assets like gold
-4. **📊 Gold Technicals (RSI)**: Technical indicators showing overbought/oversold conditions
-5. **🛢️ Inflation Pressure (Oil Prices)**: Rising oil prices increase inflation, supporting gold
-
-### Prediction Logic:
-
-- **Factor Weighting**: DXY and interest rates have highest impact on predictions
-- **Sentiment Analysis**: Combines all factors to determine overall market sentiment
-- **Confidence Levels**: Each factor includes confidence rating (High/Medium/Low)
-- **Real-time Updates**: Model continuously updates with latest market data
+The prediction model uses Lasso Regression to predict next-day gold prices based on market data analysis.
 
 ## 🎯 Current Features
 
@@ -412,7 +374,7 @@ The prediction model uses Lasso Regression with 5 key market factors to predict 
 
 - **🔴 Real-time Price**: `/xauusd/realtime` - Live XAU/USD price every 2 seconds
 - **📊 Daily Data**: `/xauusd` - Historical data with ML predictions
-- **🧠 Prediction Analysis**: `/xauusd/explanation` - Detailed market factor analysis
+- **📊 Current Price**: `/xauusd/explanation` - Current gold price information
 - **💱 Exchange Rates**: `/exchange-rate/{from}/{to}` - Currency conversion
 - **📚 Documentation**: `/docs` - Interactive Swagger UI
 - **🔌 WebSocket**: `/ws/xauusd` - Real-time data streaming
@@ -421,7 +383,6 @@ The prediction model uses Lasso Regression with 5 key market factors to predict 
 
 - **Next Day Prediction**: AI prediction for tomorrow's gold price
 - **Model Method**: Lasso Regression with 99.17% accuracy
-- **Market Analysis**: 5-factor sentiment analysis with confidence levels
 - **Historical Tracking**: SQLite database storing all predictions and results
 - **Auto-retraining**: Model updates with new market data
 
@@ -563,7 +524,7 @@ If you encounter issues not covered here:
    - Real-time gold price data
    - ML predictions for next-day prices
    - Historical price data with OHLCV information
-   - Market analysis and prediction explanations
+   - Current price information
    - Exchange rate information
 6. Live price updates every 2 seconds via WebSocket
 7. Historical predictions with accuracy tracking
