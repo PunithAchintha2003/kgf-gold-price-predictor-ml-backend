@@ -75,8 +75,8 @@ def get_cached_market_data():
         if current_time - _last_api_call < API_COOLDOWN:
             time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
-        # Try multiple symbols for better reliability - Optimized order
-        symbols_to_try = ["GC=F", "GLD", "GOLD"]
+        # Try multiple symbols for better reliability - Prioritize actual gold price (GC=F)
+        symbols_to_try = ["GC=F", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
         hist = None
 
         for symbol in symbols_to_try:
@@ -85,7 +85,9 @@ def get_cached_market_data():
                 gold = yf.Ticker(symbol)
                 hist = gold.history(period="1mo", interval="1d")
                 if not hist.empty:
-                    # Reduced logging for performance
+                    # Log which symbol is being used
+                    logger.info(
+                        f"Using {symbol} for gold data - Price: ${hist['Close'].iloc[-1]:.2f}")
                     _market_data_cache = {'hist': hist, 'symbol': symbol}
                     _cache_timestamp = now
                     break
@@ -117,15 +119,19 @@ def get_realtime_price_data():
             if current_time - _last_api_call < API_COOLDOWN:
                 time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
-            # Try multiple symbols for better reliability - Optimized
-            symbols_to_try = ["GC=F", "GLD", "GOLD"]
+            # Try multiple symbols for better reliability - Prioritize actual gold price (GC=F)
+            symbols_to_try = ["GC=F", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
 
             for symbol in symbols_to_try:
                 try:
                     _last_api_call = time.time()
                     gold = yf.Ticker(symbol)
                     # Get very recent data with 1-minute intervals for real-time feel
-                    hist = gold.history(period="1d", interval="1m")
+                    # GC=F doesn't support 1m intervals, so use daily for futures
+                    if symbol == "GC=F":
+                        hist = gold.history(period="5d", interval="1d")
+                    else:
+                        hist = gold.history(period="1d", interval="1m")
 
                     if not hist.empty:
                         current_price = float(hist['Close'].iloc[-1])
@@ -218,12 +224,15 @@ try:
 except:
     logger.warning("News-enhanced Lasso model not found, will train new model")
     # Train new enhanced model
-    market_data = news_enhanced_predictor.fetch_market_data() if hasattr(news_enhanced_predictor, 'fetch_market_data') else lasso_predictor.fetch_market_data()
+    market_data = news_enhanced_predictor.fetch_market_data() if hasattr(
+        news_enhanced_predictor, 'fetch_market_data') else lasso_predictor.fetch_market_data()
     if market_data:
         # Fetch news sentiment data
-        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(days_back=30)
+        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(
+            days_back=30)
         # Create enhanced features
-        enhanced_features = news_enhanced_predictor.create_enhanced_features(market_data, sentiment_features)
+        enhanced_features = news_enhanced_predictor.create_enhanced_features(
+            market_data, sentiment_features)
         if not enhanced_features.empty:
             news_enhanced_predictor.train_enhanced_model(enhanced_features)
             news_enhanced_predictor.save_enhanced_model(
@@ -568,14 +577,35 @@ def update_actual_prices_realtime():
 
     # Get real-time market data
     try:
-        gold = yf.Ticker("GC=F")
-        # Get recent data with higher frequency for real-time updates
-        # 2 days with 1-minute intervals
-        hist = gold.history(period="2d", interval="1m")
+        # Try multiple symbols for better reliability - Prioritize actual gold price (GC=F)
+        symbols_to_try = ["GC=F", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+        hist = None
 
-        if hist.empty:
-            # Fallback to daily data
-            hist = gold.history(period="1mo", interval="1d")
+        for symbol in symbols_to_try:
+            try:
+                gold = yf.Ticker(symbol)
+                # Get recent data with higher frequency for real-time updates
+                # 2 days with 1-minute intervals
+                hist = gold.history(period="2d", interval="1m")
+                if not hist.empty:
+                    break
+            except Exception as e:
+                if symbol == symbols_to_try[-1]:  # Last attempt
+                    logger.error(f"All symbols failed for real-time data: {e}")
+                continue
+
+        if hist is None or hist.empty:
+            # Fallback to daily data with same symbol selection
+            for symbol in symbols_to_try:
+                try:
+                    gold = yf.Ticker(symbol)
+                    hist = gold.history(period="1mo", interval="1d")
+                    if not hist.empty:
+                        break
+                except Exception as e:
+                    if symbol == symbols_to_try[-1]:  # Last attempt
+                        logger.error(f"All symbols failed for daily data: {e}")
+                    continue
 
         # Create a mapping of available dates
         available_dates = set()
@@ -665,10 +695,21 @@ def update_actual_prices():
 
     # First, get available market data to avoid repeated API calls
     try:
-        gold = yf.Ticker("GC=F")
-        # Get 30 days of data to check what dates are available
-        # Note: Using 1mo instead of 30d for better reliability with GC=F
-        hist = gold.history(period="1mo", interval="1d")
+        # Try multiple symbols for better reliability - Prioritize actual gold price (GC=F)
+        symbols_to_try = ["GC=F", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+        hist = None
+
+        for symbol in symbols_to_try:
+            try:
+                gold = yf.Ticker(symbol)
+                # Get 30 days of data to check what dates are available
+                hist = gold.history(period="1mo", interval="1d")
+                if not hist.empty:
+                    break
+            except Exception as e:
+                if symbol == symbols_to_try[-1]:  # Last attempt
+                    logger.error(f"All symbols failed for market data: {e}")
+                continue
 
         # Create a mapping of available dates
         available_dates = set()
@@ -845,10 +886,20 @@ def cleanup_invalid_predictions():
     cursor = conn.cursor()
 
     try:
-        # Get available market data dates
-        gold = yf.Ticker("GC=F")
-        # Note: Using 1mo instead of 30d for better reliability with GC=F
-        hist = gold.history(period="1mo", interval="1d")
+        # Get available market data dates - Prioritize actual gold price (GC=F)
+        symbols_to_try = ["GC=F", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+        hist = None
+
+        for symbol in symbols_to_try:
+            try:
+                gold = yf.Ticker(symbol)
+                hist = gold.history(period="1mo", interval="1d")
+                if not hist.empty:
+                    break
+            except Exception as e:
+                if symbol == symbols_to_try[-1]:  # Last attempt
+                    logger.error(f"All symbols failed for cleanup: {e}")
+                continue
 
         available_dates = set()
         for date in hist.index:
@@ -1239,18 +1290,19 @@ async def get_news_sentiment():
     """Get current news sentiment analysis for gold"""
     try:
         # Fetch and analyze news
-        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(days_back=7)
-        
+        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(
+            days_back=7)
+
         if sentiment_features.empty:
             return {
                 "status": "error",
                 "message": "No news sentiment data available",
                 "timestamp": datetime.now().isoformat()
             }
-        
+
         # Get latest sentiment data
         latest_sentiment = sentiment_features.iloc[-1]
-        
+
         return {
             "status": "success",
             "sentiment_data": {
@@ -1285,30 +1337,34 @@ async def get_enhanced_prediction():
                 "message": "Failed to fetch market data",
                 "timestamp": datetime.now().isoformat()
             }
-        
+
         # Fetch news sentiment
-        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(days_back=7)
-        
+        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(
+            days_back=7)
+
         # Create enhanced features
-        enhanced_features = news_enhanced_predictor.create_enhanced_features(market_data, sentiment_features)
-        
+        enhanced_features = news_enhanced_predictor.create_enhanced_features(
+            market_data, sentiment_features)
+
         if enhanced_features.empty:
             return {
                 "status": "error",
                 "message": "Failed to create enhanced features",
                 "timestamp": datetime.now().isoformat()
             }
-        
+
         # Make prediction
-        prediction = news_enhanced_predictor.predict_with_news(enhanced_features)
+        prediction = news_enhanced_predictor.predict_with_news(
+            enhanced_features)
         current_price = enhanced_features['gold_close'].iloc[-1]
         change = prediction - current_price
         change_pct = (change / current_price) * 100
-        
+
         # Get feature importance
         feature_importance = news_enhanced_predictor.get_feature_importance()
-        top_features = feature_importance.head(10).to_dict('records') if not feature_importance.empty else []
-        
+        top_features = feature_importance.head(10).to_dict(
+            'records') if not feature_importance.empty else []
+
         # Get sentiment summary
         sentiment_summary = {}
         if not sentiment_features.empty:
@@ -1318,7 +1374,7 @@ async def get_enhanced_prediction():
                 "news_volume": int(latest_sentiment.get('news_count', 0)),
                 "sentiment_trend": round(float(latest_sentiment.get('sentiment_trend', 0)), 4)
             }
-        
+
         return {
             "status": "success",
             "prediction": {
@@ -1333,7 +1389,7 @@ async def get_enhanced_prediction():
             "feature_importance": top_features,
             "timestamp": datetime.now().isoformat()
         }
-        
+
     except Exception as e:
         logger.error(f"Error making enhanced prediction: {e}")
         return {
@@ -1355,25 +1411,29 @@ async def compare_models():
                 "message": "Failed to fetch market data",
                 "timestamp": datetime.now().isoformat()
             }
-        
+
         # Get current price
         current_price = market_data['gold']['Close'].iloc[-1]
-        
+
         # Lasso prediction
-        lasso_features = lasso_predictor.create_fundamental_features(market_data)
+        lasso_features = lasso_predictor.create_fundamental_features(
+            market_data)
         lasso_prediction = lasso_predictor.predict_next_price(lasso_features)
         lasso_change = lasso_prediction - current_price
         lasso_change_pct = (lasso_change / current_price) * 100
-        
+
         # News-enhanced prediction
-        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(days_back=7)
-        enhanced_features = news_enhanced_predictor.create_enhanced_features(market_data, sentiment_features)
-        enhanced_prediction = news_enhanced_predictor.predict_with_news(enhanced_features)
+        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(
+            days_back=7)
+        enhanced_features = news_enhanced_predictor.create_enhanced_features(
+            market_data, sentiment_features)
+        enhanced_prediction = news_enhanced_predictor.predict_with_news(
+            enhanced_features)
         enhanced_change = enhanced_prediction - current_price
         enhanced_change_pct = (enhanced_change / current_price) * 100
-        
+
         # Legacy ML prediction - REMOVED (GRU model)
-        
+
         return {
             "status": "success",
             "current_price": round(current_price, 2),
@@ -1394,7 +1454,7 @@ async def compare_models():
             },
             "timestamp": datetime.now().isoformat()
         }
-        
+
     except Exception as e:
         logger.error(f"Error comparing models: {e}")
         return {
