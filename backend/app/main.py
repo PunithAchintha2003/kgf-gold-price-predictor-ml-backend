@@ -86,8 +86,8 @@ def get_cached_market_data():
         if current_time - _last_api_call < API_COOLDOWN:
             time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
-        # Try multiple symbols for better reliability - Prioritize spot price over ETF
-        symbols_to_try = ["GC=F", "GOLD", "GLD"]
+        # Try multiple symbols for better reliability - Prioritize XAU/USD spot price
+        symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD"]
         hist = None
 
         for symbol in symbols_to_try:
@@ -99,24 +99,10 @@ def get_cached_market_data():
                     # Validate that we're getting a reasonable gold price (not ETF price)
                     current_price = float(hist['Close'].iloc[-1])
                     
-                    # Convert GLD ETF price to approximate spot gold price
+                    # Skip GLD if it's giving ETF prices (too low)
                     if symbol == "GLD" and current_price < 1000:
-                        # GLD ETF represents approximately 1/10th of gold price
-                        # Use a more accurate multiplier based on current market
-                        gold_multiplier = 10.9  # Current ratio (4113/377 ≈ 10.9)
-                        estimated_gold_price = current_price * gold_multiplier
-                        logger.info(f"Converting GLD ETF ${current_price:.2f} to estimated gold price: ${estimated_gold_price:.2f}")
-                        
-                        # Create modified data with estimated gold price
-                        hist_modified = hist.copy()
-                        hist_modified['Close'] = hist_modified['Close'] * gold_multiplier
-                        hist_modified['Open'] = hist_modified['Open'] * gold_multiplier
-                        hist_modified['High'] = hist_modified['High'] * gold_multiplier
-                        hist_modified['Low'] = hist_modified['Low'] * gold_multiplier
-                        
-                        _market_data_cache = {'hist': hist_modified, 'symbol': f"{symbol}_converted"}
-                        _cache_timestamp = now
-                        break
+                        logger.warning(f"Skipping GLD ETF price: ${current_price:.2f} - too low for spot gold")
+                        continue
                     
                     # Prefer spot gold symbols
                     if symbol in ["GC=F", "GOLD"] and current_price > 1000:
@@ -158,8 +144,8 @@ def get_realtime_price_data():
             if current_time - _last_api_call < API_COOLDOWN:
                 time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
-            # Try multiple symbols for better reliability - Prioritize spot price over ETF
-            symbols_to_try = ["GC=F", "GOLD", "GLD"]
+            # Try multiple symbols for better reliability - Prioritize XAU/USD spot price
+            symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD"]
 
             for symbol in symbols_to_try:
                 try:
@@ -170,19 +156,9 @@ def get_realtime_price_data():
 
                     if not hist.empty:
                         current_price = float(hist['Close'].iloc[-1])
-                        
-                        # Convert GLD ETF price to approximate spot gold price
-                        if symbol == "GLD" and current_price < 1000:
-                            gold_multiplier = 10.9  # Current ratio (4113/377 ≈ 10.9)
-                            current_price = current_price * gold_multiplier
-                            symbol = f"{symbol}_converted"
-                            logger.info(f"Converting GLD ETF to estimated gold price: ${current_price:.2f}")
-                        
                         # Calculate price change from previous close
                         if len(hist) > 1:
                             prev_close = float(hist['Close'].iloc[-2])
-                            if symbol == "GLD_converted":
-                                prev_close = prev_close * gold_multiplier
                             price_change = current_price - prev_close
                             change_percentage = (
                                 price_change / prev_close) * 100
@@ -1062,7 +1038,7 @@ async def debug_realtime():
 @app.get("/debug/symbols")
 async def debug_symbols():
     """Debug endpoint to test all gold symbols and their prices"""
-    symbols_to_test = ["GC=F", "GOLD", "GLD"]
+    symbols_to_test = ["GC=F", "GOLD", "XAUUSD=X", "GLD"]
     results = {}
     
     for symbol in symbols_to_test:
@@ -1112,6 +1088,48 @@ async def clear_cache():
     return {
         "status": "success",
         "message": "All caches cleared successfully",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.get("/debug/xauusd-direct")
+async def debug_xauusd_direct():
+    """Direct XAU/USD price fetch bypassing cache"""
+    symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X"]
+    
+    for symbol in symbols_to_try:
+        try:
+            gold = yf.Ticker(symbol)
+            hist = gold.history(period="1d", interval="1d")
+            
+            if not hist.empty:
+                current_price = float(hist['Close'].iloc[-1])
+                
+                # Only return if price is reasonable for spot gold
+                if current_price > 1000:
+                    return {
+                        "status": "success",
+                        "symbol": symbol,
+                        "price": current_price,
+                        "type": "Spot Gold",
+                        "message": f"Direct fetch successful from {symbol}",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                else:
+                    return {
+                        "status": "warning",
+                        "symbol": symbol,
+                        "price": current_price,
+                        "type": "ETF or Invalid",
+                        "message": f"Price too low for spot gold: ${current_price:.2f}",
+                        "timestamp": datetime.now().isoformat()
+                    }
+        except Exception as e:
+            continue
+    
+    return {
+        "status": "error",
+        "message": "All XAU/USD symbols failed",
         "timestamp": datetime.now().isoformat()
     }
 
