@@ -99,10 +99,24 @@ def get_cached_market_data():
                     # Validate that we're getting a reasonable gold price (not ETF price)
                     current_price = float(hist['Close'].iloc[-1])
                     
-                    # Skip GLD if it's giving ETF prices (too low)
+                    # Convert GLD ETF price to approximate spot gold price
                     if symbol == "GLD" and current_price < 1000:
-                        logger.warning(f"Skipping GLD ETF price: ${current_price:.2f} - too low for spot gold")
-                        continue
+                        # GLD ETF represents approximately 1/10th of gold price
+                        # Use a more accurate multiplier based on current market
+                        gold_multiplier = 10.9  # Current ratio (4113/377 ≈ 10.9)
+                        estimated_gold_price = current_price * gold_multiplier
+                        logger.info(f"Converting GLD ETF ${current_price:.2f} to estimated gold price: ${estimated_gold_price:.2f}")
+                        
+                        # Create modified data with estimated gold price
+                        hist_modified = hist.copy()
+                        hist_modified['Close'] = hist_modified['Close'] * gold_multiplier
+                        hist_modified['Open'] = hist_modified['Open'] * gold_multiplier
+                        hist_modified['High'] = hist_modified['High'] * gold_multiplier
+                        hist_modified['Low'] = hist_modified['Low'] * gold_multiplier
+                        
+                        _market_data_cache = {'hist': hist_modified, 'symbol': f"{symbol}_converted"}
+                        _cache_timestamp = now
+                        break
                     
                     # Prefer spot gold symbols
                     if symbol in ["GC=F", "GOLD"] and current_price > 1000:
@@ -156,9 +170,19 @@ def get_realtime_price_data():
 
                     if not hist.empty:
                         current_price = float(hist['Close'].iloc[-1])
+                        
+                        # Convert GLD ETF price to approximate spot gold price
+                        if symbol == "GLD" and current_price < 1000:
+                            gold_multiplier = 10.9  # Current ratio (4113/377 ≈ 10.9)
+                            current_price = current_price * gold_multiplier
+                            symbol = f"{symbol}_converted"
+                            logger.info(f"Converting GLD ETF to estimated gold price: ${current_price:.2f}")
+                        
                         # Calculate price change from previous close
                         if len(hist) > 1:
                             prev_close = float(hist['Close'].iloc[-2])
+                            if symbol == "GLD_converted":
+                                prev_close = prev_close * gold_multiplier
                             price_change = current_price - prev_close
                             change_percentage = (
                                 price_change / prev_close) * 100
