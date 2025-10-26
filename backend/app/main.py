@@ -98,16 +98,24 @@ def get_cached_market_data():
                 if not hist.empty:
                     # Validate that we're getting a reasonable gold price (not ETF price)
                     current_price = float(hist['Close'].iloc[-1])
-                    if symbol == "GLD" and current_price < 1000:
-                        # GLD ETF price should be much lower than spot gold
-                        logger.info(f"Using GLD ETF price: ${current_price:.2f}")
-                    elif symbol in ["GC=F", "GOLD"] and current_price > 1000:
-                        # Spot gold should be much higher
-                        logger.info(f"Using spot gold price: ${current_price:.2f}")
                     
-                    _market_data_cache = {'hist': hist, 'symbol': symbol}
-                    _cache_timestamp = now
-                    break
+                    # Skip GLD if it's giving ETF prices (too low)
+                    if symbol == "GLD" and current_price < 1000:
+                        logger.warning(f"Skipping GLD ETF price: ${current_price:.2f} - too low for spot gold")
+                        continue
+                    
+                    # Prefer spot gold symbols
+                    if symbol in ["GC=F", "GOLD"] and current_price > 1000:
+                        logger.info(f"Using spot gold price from {symbol}: ${current_price:.2f}")
+                        _market_data_cache = {'hist': hist, 'symbol': symbol}
+                        _cache_timestamp = now
+                        break
+                    elif symbol == "GLD" and current_price > 1000:
+                        # Only use GLD if spot symbols fail and GLD gives reasonable price
+                        logger.info(f"Using GLD price: ${current_price:.2f}")
+                        _market_data_cache = {'hist': hist, 'symbol': symbol}
+                        _cache_timestamp = now
+                        break
             except Exception as e:
                 # Only log errors, not warnings for better performance
                 if symbol == symbols_to_try[-1]:  # Only log on last attempt
@@ -1060,6 +1068,26 @@ async def debug_symbols():
         "symbols_tested": symbols_to_test,
         "results": results,
         "recommendation": "Use GC=F or GOLD for spot gold prices, avoid GLD (ETF)",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.post("/debug/clear-cache")
+async def clear_cache():
+    """Clear all caches to force fresh data fetch"""
+    global _market_data_cache, _cache_timestamp, _realtime_cache, _realtime_cache_timestamp
+    
+    # Clear market data cache
+    _market_data_cache = {}
+    _cache_timestamp = None
+    
+    # Clear real-time cache
+    _realtime_cache = {}
+    _realtime_cache_timestamp = None
+    
+    return {
+        "status": "success",
+        "message": "All caches cleared successfully",
         "timestamp": datetime.now().isoformat()
     }
 
