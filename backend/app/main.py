@@ -86,8 +86,8 @@ def get_cached_market_data():
         if current_time - _last_api_call < API_COOLDOWN:
             time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
-        # Try multiple symbols for better reliability - Optimized order
-        symbols_to_try = ["GC=F", "GLD", "GOLD"]
+        # Try multiple symbols for better reliability - Prioritize spot price over ETF
+        symbols_to_try = ["GC=F", "GOLD", "GLD"]
         hist = None
 
         for symbol in symbols_to_try:
@@ -96,7 +96,15 @@ def get_cached_market_data():
                 gold = yf.Ticker(symbol)
                 hist = gold.history(period="1mo", interval="1d")
                 if not hist.empty:
-                    # Reduced logging for performance
+                    # Validate that we're getting a reasonable gold price (not ETF price)
+                    current_price = float(hist['Close'].iloc[-1])
+                    if symbol == "GLD" and current_price < 1000:
+                        # GLD ETF price should be much lower than spot gold
+                        logger.info(f"Using GLD ETF price: ${current_price:.2f}")
+                    elif symbol in ["GC=F", "GOLD"] and current_price > 1000:
+                        # Spot gold should be much higher
+                        logger.info(f"Using spot gold price: ${current_price:.2f}")
+                    
                     _market_data_cache = {'hist': hist, 'symbol': symbol}
                     _cache_timestamp = now
                     break
@@ -128,8 +136,8 @@ def get_realtime_price_data():
             if current_time - _last_api_call < API_COOLDOWN:
                 time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
-            # Try multiple symbols for better reliability - Optimized
-            symbols_to_try = ["GC=F", "GLD", "GOLD"]
+            # Try multiple symbols for better reliability - Prioritize spot price over ETF
+            symbols_to_try = ["GC=F", "GOLD", "GLD"]
 
             for symbol in symbols_to_try:
                 try:
@@ -1017,6 +1025,43 @@ async def debug_realtime():
             "message": f"Error in debug realtime: {e}",
             "realtime_data": None
         }
+
+
+@app.get("/debug/symbols")
+async def debug_symbols():
+    """Debug endpoint to test all gold symbols and their prices"""
+    symbols_to_test = ["GC=F", "GOLD", "GLD"]
+    results = {}
+    
+    for symbol in symbols_to_test:
+        try:
+            gold = yf.Ticker(symbol)
+            hist = gold.history(period="1d", interval="1d")
+            if not hist.empty:
+                current_price = float(hist['Close'].iloc[-1])
+                results[symbol] = {
+                    "price": current_price,
+                    "type": "ETF" if symbol == "GLD" else "Spot Gold",
+                    "status": "success"
+                }
+            else:
+                results[symbol] = {
+                    "status": "error",
+                    "message": "No data available"
+                }
+        except Exception as e:
+            results[symbol] = {
+                "status": "error",
+                "message": str(e)
+            }
+    
+    return {
+        "status": "success",
+        "symbols_tested": symbols_to_test,
+        "results": results,
+        "recommendation": "Use GC=F or GOLD for spot gold prices, avoid GLD (ETF)",
+        "timestamp": datetime.now().isoformat()
+    }
 
 
 @app.get("/performance")
