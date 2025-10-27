@@ -17,7 +17,7 @@ MODEL_PATH = BASE_DIR / "models" / "gold_ml_model.pkl"
 # API settings
 API_V1_PREFIX = "/api/v1"
 HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", 8000))
+PORT = int(os.getenv("PORT", 8001))
 
 # CORS settings
 CORS_ORIGINS = [

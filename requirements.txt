@@ -1,15 +1,17 @@
-# Root requirements.txt for Render deployment
+# Python version specification
+python-version>=3.11,<3.14
+
 # Core API Framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
-# Data Processing - stable versions with pre-built wheels
-pandas==2.1.4
-numpy==1.25.2
+# Data Processing - using pre-built wheels to avoid compilation issues
+pandas==2.2.2
+numpy==1.26.4
 
 # Machine Learning
-scikit-learn==1.3.2
+scikit-learn==1.4.2
 joblib==1.3.2
 
 # Market Data
@@ -20,6 +22,6 @@ requests==2.31.0
 textblob==0.17.1
 feedparser==6.0.10
 
-# Build tools
+# Build dependencies to ensure proper compilation
 setuptools>=65.0.0
 wheel>=0.40.0
