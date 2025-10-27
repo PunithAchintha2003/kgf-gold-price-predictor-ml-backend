@@ -1491,6 +1491,13 @@ def get_xauusd_daily_data():
         }
 
 
+@app.get("/favicon.ico")
+async def favicon():
+    """Handle favicon requests to prevent 404 errors"""
+    from fastapi.responses import Response
+    return Response(status_code=204)
+
+
 @app.get("/")
 async def root():
     return {"message": "XAU/USD Real-time Data API with News Sentiment Analysis", "status": "running"}
