@@ -276,7 +276,7 @@ This application is for **educational and research purposes only**. AI predictio
 
 - **Documentation**: Available at `/docs` when server is running
 - **Issues**: Open an issue on GitHub
-- **Email**: [Your Email]
+- **Email**: Punithachintha@gmail.com
 
 ## 📈 Status
 
