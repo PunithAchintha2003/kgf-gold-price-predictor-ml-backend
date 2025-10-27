@@ -31,7 +31,7 @@ def check_dependencies():
         return True
     except ImportError as e:
         print(f"❌ Missing dependency: {e}")
-        print("Please install requirements: pip install -r backend/requirements.txt")
+        print("Please install requirements: pip install -r requirements.txt")
         return False
 
 
@@ -42,7 +42,7 @@ def check_backend_structure():
         "backend/app/main.py",
         "backend/models/lasso_model.py",
         "backend/models/news_prediction.py",
-        "backend/requirements.txt"
+        "requirements.txt"
     ]
 
     for file_path in required_files:
