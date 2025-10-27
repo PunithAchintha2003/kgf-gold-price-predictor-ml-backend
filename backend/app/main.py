@@ -30,25 +30,10 @@ except:
 
 
 def create_yf_ticker(symbol, session=None):
-    """Create a yfinance ticker with custom headers to bypass Yahoo blocking"""
-    try:
-        # Create a custom session with headers
-        if session is None:
-            session = requests.Session()
-            session.headers.update({
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/json, text/plain, */*',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate, br',
-            })
-
-        # Create ticker with custom session
-        ticker = yf.Ticker(symbol, session=session)
-        return ticker
-    except Exception as e:
-        logger.warning(
-            f"Failed to create custom ticker for {symbol}: {e}, using default")
-        return yf.Ticker(symbol)
+    """Create a yfinance ticker - let yfinance handle anti-blocking with curl_cffi"""
+    # yfinance >= 0.2.40 handles anti-blocking internally with curl_cffi
+    # Don't pass session parameter - let yfinance create its own optimized session
+    return yf.Ticker(symbol)
 
 
 # Environment configuration
@@ -297,26 +282,11 @@ try:
         str(BACKEND_DIR / 'models/enhanced_lasso_gold_model.pkl'))
     logger.info("News-enhanced Lasso model loaded successfully")
 except:
-    logger.warning("News-enhanced Lasso model not found, will train new model")
-    # Train new enhanced model
-    market_data = news_enhanced_predictor.fetch_market_data() if hasattr(
-        news_enhanced_predictor, 'fetch_market_data') else lasso_predictor.fetch_market_data()
-    if market_data:
-        # Fetch news sentiment data
-        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(
-            days_back=30)
-        # Create enhanced features
-        enhanced_features = news_enhanced_predictor.create_enhanced_features(
-            market_data, sentiment_features)
-        if not enhanced_features.empty:
-            news_enhanced_predictor.train_enhanced_model(enhanced_features)
-            news_enhanced_predictor.save_enhanced_model(
-                str(BACKEND_DIR / 'models/enhanced_lasso_gold_model.pkl'))
-            logger.info("New news-enhanced Lasso model trained and saved")
-        else:
-            logger.error("Failed to prepare enhanced training data")
-    else:
-        logger.error("Failed to fetch market data for news-enhanced model")
+    # Skip training on startup to avoid rate limiting
+    # The regular Lasso model will be used instead
+    logger.info(
+        "News-enhanced Lasso model not found - using regular Lasso model (train offline to avoid rate limits)")
+    # Optionally train offline with: python -m models.news_prediction
 
 
 def init_database():
