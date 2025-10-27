@@ -288,5 +288,3 @@ This application is for **educational and research purposes only**. AI predictio
 ![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)
 
 ---
-
-Made with ❤️ by KGF Team
