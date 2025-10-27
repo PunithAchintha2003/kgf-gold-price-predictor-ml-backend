@@ -282,26 +282,11 @@ try:
         str(BACKEND_DIR / 'models/enhanced_lasso_gold_model.pkl'))
     logger.info("News-enhanced Lasso model loaded successfully")
 except:
-    logger.warning("News-enhanced Lasso model not found, will train new model")
-    # Train new enhanced model
-    market_data = news_enhanced_predictor.fetch_market_data() if hasattr(
-        news_enhanced_predictor, 'fetch_market_data') else lasso_predictor.fetch_market_data()
-    if market_data:
-        # Fetch news sentiment data
-        sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(
-            days_back=30)
-        # Create enhanced features
-        enhanced_features = news_enhanced_predictor.create_enhanced_features(
-            market_data, sentiment_features)
-        if not enhanced_features.empty:
-            news_enhanced_predictor.train_enhanced_model(enhanced_features)
-            news_enhanced_predictor.save_enhanced_model(
-                str(BACKEND_DIR / 'models/enhanced_lasso_gold_model.pkl'))
-            logger.info("New news-enhanced Lasso model trained and saved")
-        else:
-            logger.error("Failed to prepare enhanced training data")
-    else:
-        logger.error("Failed to fetch market data for news-enhanced model")
+    # Skip training on startup to avoid rate limiting
+    # The regular Lasso model will be used instead
+    logger.info(
+        "News-enhanced Lasso model not found - using regular Lasso model (train offline to avoid rate limits)")
+    # Optionally train offline with: python -m models.news_prediction
 
 
 def init_database():
