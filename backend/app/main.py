@@ -97,6 +97,10 @@ def get_cached_market_data():
                 _last_api_call = time.time()
                 gold = yf.Ticker(symbol)
                 hist = gold.history(period="1mo", interval="1d")
+
+                if hist.empty:
+                    logger.warning(f"Empty history data for {symbol}")
+
                 if not hist.empty:
                     # Validate that we're getting a reasonable gold price (not ETF price)
                     current_price = float(hist['Close'].iloc[-1])
@@ -123,12 +127,17 @@ def get_cached_market_data():
                         _cache_timestamp = now
                         break
             except Exception as e:
-                # Only log errors, not warnings for better performance
-                if symbol == symbols_to_try[-1]:  # Only log on last attempt
-                    logger.error(f"All gold data sources failed: {e}")
+                # Log detailed error for each symbol
+                logger.error(
+                    f"Error fetching {symbol}: {type(e).__name__}: {e}")
+                if symbol == symbols_to_try[-1]:  # Summary on last attempt
+                    logger.error(
+                        f"All {len(symbols_to_try)} gold data sources failed")
                 continue
 
         if hist is None or hist.empty:
+            logger.error(
+                "No market data available from any symbol - returning None")
             return None, None
 
     return _market_data_cache.get('hist'), _market_data_cache.get('symbol')
@@ -1163,8 +1172,9 @@ async def clear_cache():
 
 @app.get("/debug/xauusd-direct")
 async def debug_xauusd_direct():
-    """Direct XAU/USD price fetch bypassing cache"""
-    symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X"]
+    """Direct XAU/USD price fetch bypassing cache with detailed diagnostics"""
+    symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD"]
+    results = []
 
     for symbol in symbols_to_try:
         try:
@@ -1174,32 +1184,46 @@ async def debug_xauusd_direct():
             if not hist.empty:
                 current_price = float(hist['Close'].iloc[-1])
 
+                results.append({
+                    "symbol": symbol,
+                    "status": "success",
+                    "price": current_price,
+                    "data_points": len(hist),
+                    "latest_date": hist.index[-1].strftime('%Y-%m-%d') if len(hist) > 0 else None,
+                    "type": "Spot Gold" if current_price > 1000 else "ETF or Invalid"
+                })
+
                 # Only return if price is reasonable for spot gold
-                if current_price > 1000:
+                if current_price > 1000 and symbol in ["GC=F", "GOLD", "XAUUSD=X"]:
                     return {
                         "status": "success",
                         "symbol": symbol,
                         "price": current_price,
                         "type": "Spot Gold",
                         "message": f"Direct fetch successful from {symbol}",
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "all_tested": results
                     }
-                else:
-                    return {
-                        "status": "warning",
-                        "symbol": symbol,
-                        "price": current_price,
-                        "type": "ETF or Invalid",
-                        "message": f"Price too low for spot gold: ${current_price:.2f}",
-                        "timestamp": datetime.now().isoformat()
-                    }
+            else:
+                results.append({
+                    "symbol": symbol,
+                    "status": "empty",
+                    "message": "No data returned"
+                })
         except Exception as e:
-            continue
+            results.append({
+                "symbol": symbol,
+                "status": "error",
+                "error": str(e),
+                "error_type": type(e).__name__
+            })
+            logger.error(f"Error testing {symbol}: {e}")
 
     return {
         "status": "error",
         "message": "All XAU/USD symbols failed",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "results": results
     }
 
 
