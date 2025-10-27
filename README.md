@@ -17,22 +17,23 @@ A production-ready FastAPI backend service for XAU/USD (Gold) price prediction u
 ## ⚡ Quick Start
 
 ```bash
-# 1. Navigate to backend directory
-cd backend
+# 1. Navigate to project root directory
+cd kgf-gold-price-predictor-ml-backend
 
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Start the server
-python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+# 3. Start the server (Option 1: Using run script - Recommended)
+python3 run_backend.py
+
+# 3. Start the server (Option 2: Using uvicorn directly)
+cd backend
+python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
 # 4. Access the API
-# - API: http://localhost:8000
-# - Docs: http://localhost:8000/docs
-# - WebSocket: ws://localhost:8000/ws/xauusd
-
-# Alternative: Use the run script
-python3 run_backend.py
+# - API: http://localhost:8001
+# - Docs: http://localhost:8001/docs
+# - WebSocket: ws://localhost:8001/ws/xauusd
 ```
 
 ## 🚀 Features
@@ -74,24 +75,27 @@ python3 run_backend.py
 
 ### System Requirements
 
-- **Python**: 3.8 or higher
+- **Python**: 3.11 or higher (recommended: 3.11-3.13)
 - **Internet Connection**: Required for fetching live gold prices and news data
 - **Operating System**: Windows, macOS, or Linux
 
 ### Python Dependencies
 
 ```txt
+# Python version specification
+python-version>=3.11,<3.14
+
 # Core API Framework
 fastapi==0.104.1
-uvicorn==0.24.0
+uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
 # Data Processing
-pandas==2.1.3
-numpy==1.24.3
+pandas==2.2.2
+numpy==1.26.4
 
 # Machine Learning
-scikit-learn==1.3.2
+scikit-learn==1.4.2
 joblib==1.3.2
 
 # Market Data
@@ -101,6 +105,10 @@ requests==2.31.0
 # News Analysis
 textblob==0.17.1
 feedparser==6.0.10
+
+# Build dependencies
+setuptools>=65.0.0
+wheel>=0.40.0
 ```
 
 ## 🛠️ Installation
@@ -117,19 +125,24 @@ feedparser==6.0.10
 2. **Install Python dependencies**:
 
    ```bash
-   cd backend
    pip install -r requirements.txt
    ```
 
 3. **Start the backend server**:
 
    ```bash
-   python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+   # Using the run script (Recommended)
+   python3 run_backend.py
+
+   # OR using uvicorn directly
+   cd backend
+   python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
    ```
 
 4. **Access the API**:
-   - API: http://localhost:8000
-   - Documentation: http://localhost:8000/docs
+   - API: http://localhost:8001
+   - Documentation: http://localhost:8001/docs
+   - WebSocket: ws://localhost:8001/ws/xauusd
 
 ### Optional: News API Configuration
 
@@ -223,16 +236,16 @@ KGF-gold-price-predictor-ml-backend/
 │   ├── data/
 │   │   ├── gold_predictions.db       # Main prediction database
 │   │   └── gold_predictions_backup.db # Backup database
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── lasso_model.py            # Lasso regression model
-│   │   ├── news_prediction.py        # News sentiment model
-│   │   ├── lasso_gold_model.pkl      # Trained Lasso model
-│   │   └── enhanced_lasso_gold_model.pkl # Enhanced model
-│   └── requirements.txt              # Python dependencies
+│   └── models/
+│       ├── __init__.py
+│       ├── lasso_model.py            # Lasso regression model
+│       ├── news_prediction.py        # News sentiment model
+│       ├── lasso_gold_model.pkl      # Trained Lasso model
+│       └── enhanced_lasso_gold_model.pkl # Enhanced model
+├── requirements.txt                  # Python dependencies (root level)
+├── run_backend.py                    # Backend runner script (root level)
 ├── .gitignore                        # Git ignore rules
-├── README.md                         # This documentation
-└── run_backend.py                    # Backend runner script
+└── README.md                         # This documentation
 ```
 
 ## 🔧 Technical Details
@@ -261,7 +274,7 @@ KGF-gold-price-predictor-ml-backend/
 ### Real-time Data
 
 - **Current Gold Price**: $4,118.40 (as of latest update)
-- **Next Day Prediction**: $4,103.32
+- **News-Enhanced Lasso Regression predicted price**: $4,103.32
 - **Prediction Method**: Lasso Regression
 - **Model Accuracy**: 96.16% R² score
 - **Update Frequency**: Every 10 seconds via WebSocket
@@ -287,39 +300,42 @@ KGF-gold-price-predictor-ml-backend/
 
 ### Common Issues & Solutions
 
-| Problem                         | Solution                        | Check                                                                               |
-| ------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------- |
-| **Backend not starting**        | Check if port 8000 is available | `lsof -i :8000`                                                                     |
-| **API not responding**          | Ensure backend is running       | Visit http://localhost:8000                                                         |
-| **No data updates**             | Check internet connection       | Test Yahoo Finance access                                                           |
-| **WebSocket connection failed** | Verify WebSocket endpoint       | Check `/ws/xauusd` endpoint                                                         |
-| **Module not found error**      | Run from backend directory      | `cd backend && python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload` |
+| Problem                         | Solution                        | Check                                               |
+| ------------------------------- | ------------------------------- | --------------------------------------------------- |
+| **Backend not starting**        | Check if port 8001 is available | `lsof -i :8001`                                     |
+| **API not responding**          | Ensure backend is running       | Visit http://localhost:8001                         |
+| **No data updates**             | Check internet connection       | Test Yahoo Finance access                           |
+| **WebSocket connection failed** | Verify WebSocket endpoint       | Check `/ws/xauusd` endpoint                         |
+| **Module not found error**      | Install dependencies from root  | `pip install -r requirements.txt` from project root |
 
 ### Debug Commands
 
 ```bash
 # Check if ports are available
-lsof -i :8000  # Backend port
+lsof -i :8001  # Backend port
 
 # Check Python dependencies
 pip list | grep -E "(fastapi|uvicorn|pandas|yfinance)"
 
 # Test backend directly
-curl http://localhost:8000/
-curl http://localhost:8000/xauusd
+curl http://localhost:8001/
+curl http://localhost:8001/xauusd
 ```
 
 ## 🚀 Recent Updates & Optimizations
 
 ### ✅ Latest Optimizations
 
-- **Project Cleanup**: Removed 15+ temporary and duplicate files
+- **Project Restructure**: Moved requirements.txt to project root for better organization
+- **Simplified Setup**: Consolidated run script (run_backend.py) at root level
+- **Python 3.11+**: Updated to use Python 3.11-3.13 for better performance and modern features
+- **Package Updates**: Upgraded to latest stable versions (pandas 2.2.2, numpy 1.26.4, scikit-learn 1.4.2)
 - **Database Optimization**: Preserved all historical prediction data
-- **Model Streamlining**: Removed GRU model, focused on Lasso Regression
-- **News Integration**: Added comprehensive news sentiment analysis with multi-source fetching
+- **Model Streamlining**: Focused on Lasso Regression with news sentiment enhancement
+- **News Integration**: Comprehensive news sentiment analysis with multi-source fetching
 - **API Enhancement**: Added news sentiment, model comparison, and data management endpoints
-- **Performance Optimization**: Improved caching and reduced WebSocket update frequency
-- **Documentation**: Consolidated all documentation into single README
+- **Performance Optimization**: Improved caching and reduced WebSocket update frequency (10s intervals)
+- **Documentation**: Updated README to reflect current project structure and setup
 
 ### 🔄 Model Architecture
 

@@ -38,6 +38,7 @@ def check_backend_structure():
     required_files = [
         "backend/app/main.py",
         "backend/models/lasso_model.py",
+        "backend/models/news_prediction.py",
         "backend/requirements.txt"
     ]
 
@@ -83,9 +84,15 @@ def main():
 
     try:
         # Ensure backend directory is on sys.path for imports
-        backend_dir = Path(__file__).resolve().parent / "backend"
-        if str(backend_dir) not in sys.path:
-            sys.path.insert(0, str(backend_dir))
+        project_root = Path(__file__).resolve().parent
+        backend_path = project_root / "backend"
+
+        # Add backend to sys.path for model imports
+        if str(backend_path) not in sys.path:
+            sys.path.insert(0, str(backend_path))
+
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
 
         uvicorn.run(
             "app.main:app",

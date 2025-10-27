@@ -17,9 +17,21 @@ from contextlib import contextmanager
 from models.lasso_model import LassoGoldPredictor
 from models.news_prediction import NewsEnhancedLassoPredictor, NewsSentimentAnalyzer
 
-# Set up logging - Optimized for performance
-logging.basicConfig(level=logging.WARNING)  # Reduced from INFO to WARNING
+# Environment configuration
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+LOG_LEVEL = os.getenv("LOG_LEVEL", "WARNING")
+CACHE_DURATION = int(os.getenv("CACHE_DURATION", "300"))
+API_COOLDOWN = int(os.getenv("API_COOLDOWN", "2"))
+REALTIME_CACHE_DURATION = int(os.getenv("REALTIME_CACHE_DURATION", "60"))
+
+# Set up logging based on environment
+log_level = getattr(logging, LOG_LEVEL.upper(), logging.WARNING)
+logging.basicConfig(level=log_level)
 logger = logging.getLogger(__name__)
+
+# Log environment info
+logger.info(
+    f"Starting app in {ENVIRONMENT} environment with log level {LOG_LEVEL}")
 
 
 # Paths relative to backend directory
@@ -53,12 +65,12 @@ def get_db_connection(db_path=DB_PATH):
 # Optimized cache for market data to reduce API calls
 _market_data_cache = {}
 _cache_timestamp = None
-CACHE_DURATION = 300  # 5 minutes - increased for better performance
+# CACHE_DURATION is now set from environment variables above
 _last_api_call = 0
-API_COOLDOWN = 2  # 2 seconds between API calls - increased for stability
+# API_COOLDOWN is now set from environment variables above
 _realtime_cache = {}
 _realtime_cache_timestamp = None
-REALTIME_CACHE_DURATION = 60  # 1 minute for real-time data
+# REALTIME_CACHE_DURATION is now set from environment variables above
 
 
 def get_cached_market_data():
@@ -75,8 +87,8 @@ def get_cached_market_data():
         if current_time - _last_api_call < API_COOLDOWN:
             time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
-        # Try multiple symbols for better reliability - Prioritize actual gold price (GC=F)
-        symbols_to_try = ["GC=F", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+        # Try multiple symbols for better reliability - Prioritize XAU/USD spot price
+        symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
         hist = None
 
         for symbol in symbols_to_try:
@@ -85,12 +97,29 @@ def get_cached_market_data():
                 gold = yf.Ticker(symbol)
                 hist = gold.history(period="1mo", interval="1d")
                 if not hist.empty:
-                    # Log which symbol is being used
-                    logger.info(
-                        f"Using {symbol} for gold data - Price: ${hist['Close'].iloc[-1]:.2f}")
-                    _market_data_cache = {'hist': hist, 'symbol': symbol}
-                    _cache_timestamp = now
-                    break
+                    # Validate that we're getting a reasonable gold price (not ETF price)
+                    current_price = float(hist['Close'].iloc[-1])
+
+                    # Skip ETFs if they're giving prices too low for spot gold
+                    etf_symbols = ["GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+                    if symbol in etf_symbols and current_price < 1000:
+                        logger.warning(
+                            f"Skipping {symbol} ETF price: ${current_price:.2f} - too low for spot gold")
+                        continue
+
+                    # Prefer spot gold symbols
+                    if symbol in ["GC=F", "GOLD", "XAUUSD=X"] and current_price > 1000:
+                        logger.info(
+                            f"Using spot gold price from {symbol}: ${current_price:.2f}")
+                        _market_data_cache = {'hist': hist, 'symbol': symbol}
+                        _cache_timestamp = now
+                        break
+                    elif symbol in ["GLD", "IAU", "SGOL", "OUNZ", "AAAU"] and current_price > 1000:
+                        # Only use ETF symbols if spot symbols fail and ETF gives reasonable price
+                        logger.info(f"Using {symbol} price: ${current_price:.2f}")
+                        _market_data_cache = {'hist': hist, 'symbol': symbol}
+                        _cache_timestamp = now
+                        break
             except Exception as e:
                 # Only log errors, not warnings for better performance
                 if symbol == symbols_to_try[-1]:  # Only log on last attempt
@@ -119,8 +148,8 @@ def get_realtime_price_data():
             if current_time - _last_api_call < API_COOLDOWN:
                 time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
-            # Try multiple symbols for better reliability - Prioritize actual gold price (GC=F)
-            symbols_to_try = ["GC=F", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+            # Try multiple symbols for better reliability - Prioritize XAU/USD spot price
+            symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
 
             for symbol in symbols_to_try:
                 try:
@@ -455,8 +484,10 @@ def get_historical_predictions(days=30):
 
 def get_ml_model_display_name():
     """Get the display name for the current ML model"""
-    if lasso_predictor.model is not None:
-        return "Lasso Regression"
+    if news_enhanced_predictor.model is not None:
+        return "News-Enhanced Lasso Regression"
+    elif lasso_predictor.model is not None:
+        return "Lasso Regression (Fallback)"
     elif False:  # GRU model removed
         return "Legacy MLP Neural Network"
     else:
@@ -942,7 +973,11 @@ def cleanup_invalid_predictions():
 init_database()
 init_backup_database()
 
-app = FastAPI(title="XAU/USD Real-time Data API", version="1.0.0")
+app = FastAPI(
+    title="XAU/USD Real-time Data API",
+    version="1.0.0",
+    description=f"Gold price prediction API running in {ENVIRONMENT} environment"
+)
 
 # Add CORS middleware to allow Streamlit frontend to connect
 app.add_middleware(
@@ -961,7 +996,11 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "service": "XAU/USD Real-time Data API",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "environment": ENVIRONMENT,
+        "log_level": LOG_LEVEL,
+        "cache_duration": CACHE_DURATION,
+        "api_cooldown": API_COOLDOWN
     }
 
 
@@ -1051,6 +1090,105 @@ async def debug_realtime():
         }
 
 
+@app.get("/debug/symbols")
+async def debug_symbols():
+    """Debug endpoint to test all gold symbols and their prices"""
+    symbols_to_test = ["GC=F", "GOLD", "XAUUSD=X", "GLD"]
+    results = {}
+
+    for symbol in symbols_to_test:
+        try:
+            gold = yf.Ticker(symbol)
+            hist = gold.history(period="1d", interval="1d")
+            if not hist.empty:
+                current_price = float(hist['Close'].iloc[-1])
+                results[symbol] = {
+                    "price": current_price,
+                    "type": "ETF" if symbol == "GLD" else "Spot Gold",
+                    "status": "success"
+                }
+            else:
+                results[symbol] = {
+                    "status": "error",
+                    "message": "No data available"
+                }
+        except Exception as e:
+            results[symbol] = {
+                "status": "error",
+                "message": str(e)
+            }
+
+    return {
+        "status": "success",
+        "symbols_tested": symbols_to_test,
+        "results": results,
+        "recommendation": "Use GC=F or GOLD for spot gold prices, avoid GLD (ETF)",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.post("/debug/clear-cache")
+async def clear_cache():
+    """Clear all caches to force fresh data fetch"""
+    global _market_data_cache, _cache_timestamp, _realtime_cache, _realtime_cache_timestamp
+
+    # Clear market data cache
+    _market_data_cache = {}
+    _cache_timestamp = None
+
+    # Clear real-time cache
+    _realtime_cache = {}
+    _realtime_cache_timestamp = None
+
+    return {
+        "status": "success",
+        "message": "All caches cleared successfully",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.get("/debug/xauusd-direct")
+async def debug_xauusd_direct():
+    """Direct XAU/USD price fetch bypassing cache"""
+    symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X"]
+
+    for symbol in symbols_to_try:
+        try:
+            gold = yf.Ticker(symbol)
+            hist = gold.history(period="1d", interval="1d")
+
+            if not hist.empty:
+                current_price = float(hist['Close'].iloc[-1])
+
+                # Only return if price is reasonable for spot gold
+                if current_price > 1000:
+                    return {
+                        "status": "success",
+                        "symbol": symbol,
+                        "price": current_price,
+                        "type": "Spot Gold",
+                        "message": f"Direct fetch successful from {symbol}",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                else:
+                    return {
+                        "status": "warning",
+                        "symbol": symbol,
+                        "price": current_price,
+                        "type": "ETF or Invalid",
+                        "message": f"Price too low for spot gold: ${current_price:.2f}",
+                        "timestamp": datetime.now().isoformat()
+                    }
+        except Exception as e:
+            continue
+
+    return {
+        "status": "error",
+        "message": "All XAU/USD symbols failed",
+        "timestamp": datetime.now().isoformat()
+    }
+
+
 @app.get("/performance")
 async def get_performance_stats():
     """Performance monitoring endpoint - New"""
@@ -1107,9 +1245,42 @@ manager = ConnectionManager()
 
 
 def predict_next_day_price_ml():
-    """Predict next day price using Lasso Regression model"""
+    """Predict next day price using News-Enhanced Lasso (primary) with Lasso Regression (fallback)"""
     try:
-        # Try Lasso Regression model first
+        # Try News-Enhanced Lasso model first (PRIMARY)
+        if news_enhanced_predictor.model is not None:
+            try:
+                # Get fresh market data
+                market_data = lasso_predictor.fetch_market_data()
+                if not market_data:
+                    logger.error("Failed to fetch market data")
+                    raise ValueError("No market data")
+
+                # Fetch news sentiment (if available)
+                sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(
+                    days_back=7)
+
+                # Create enhanced features
+                enhanced_features = news_enhanced_predictor.create_enhanced_features(
+                    market_data, sentiment_features)
+
+                if enhanced_features.empty:
+                    raise ValueError("No enhanced features created")
+
+                # Make prediction using News-Enhanced model
+                predicted_price = news_enhanced_predictor.predict_with_news(
+                    enhanced_features)
+
+                logger.info(
+                    f"News-Enhanced Lasso prediction: ${predicted_price:.2f}")
+                return round(predicted_price, 2)
+
+            except Exception as e:
+                logger.warning(
+                    f"News-Enhanced model failed: {e}, falling back to Lasso Regression")
+                # Fallback to base Lasso model
+
+        # Fallback to Lasso Regression model
         if lasso_predictor.model is not None:
             # Get fresh market data
             market_data = lasso_predictor.fetch_market_data()
@@ -1125,12 +1296,10 @@ def predict_next_day_price_ml():
             # Make prediction using Lasso Regression
             predicted_price = lasso_predictor.predict_next_price(features_df)
 
-            logger.info(f"Lasso Regression prediction: ${predicted_price:.2f}")
+            logger.info(
+                f"Lasso Regression (fallback) prediction: ${predicted_price:.2f}")
             return round(predicted_price, 2)
 
-        # Fallback to legacy ML model - REMOVED
-        elif False:  # GRU model removed
-            return None
         else:
             logger.error("No trained models available")
             return None
@@ -1660,4 +1829,4 @@ async def startup_event():
     asyncio.create_task(continuous_accuracy_updates())
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)
