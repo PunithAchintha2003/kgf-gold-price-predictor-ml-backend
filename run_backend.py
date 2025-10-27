@@ -38,7 +38,8 @@ def check_backend_structure():
     required_files = [
         "backend/app/main.py",
         "backend/models/lasso_model.py",
-        "backend/models/news_prediction.py"
+        "backend/models/news_prediction.py",
+        "backend/requirements.txt"
     ]
 
     for file_path in required_files:
@@ -94,7 +95,7 @@ def main():
             sys.path.insert(0, str(project_root))
 
         uvicorn.run(
-            "backend.app.main:app",
+            "app.main:app",
             host="0.0.0.0",
             port=8001,
             reload=False,

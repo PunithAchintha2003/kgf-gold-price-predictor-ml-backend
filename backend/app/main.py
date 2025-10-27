@@ -88,7 +88,7 @@ def get_cached_market_data():
             time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
         # Try multiple symbols for better reliability - Prioritize XAU/USD spot price
-        symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD"]
+        symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
         hist = None
 
         for symbol in symbols_to_try:
@@ -100,22 +100,23 @@ def get_cached_market_data():
                     # Validate that we're getting a reasonable gold price (not ETF price)
                     current_price = float(hist['Close'].iloc[-1])
 
-                    # Skip GLD if it's giving ETF prices (too low)
-                    if symbol == "GLD" and current_price < 1000:
+                    # Skip ETFs if they're giving prices too low for spot gold
+                    etf_symbols = ["GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+                    if symbol in etf_symbols and current_price < 1000:
                         logger.warning(
-                            f"Skipping GLD ETF price: ${current_price:.2f} - too low for spot gold")
+                            f"Skipping {symbol} ETF price: ${current_price:.2f} - too low for spot gold")
                         continue
 
                     # Prefer spot gold symbols
-                    if symbol in ["GC=F", "GOLD"] and current_price > 1000:
+                    if symbol in ["GC=F", "GOLD", "XAUUSD=X"] and current_price > 1000:
                         logger.info(
                             f"Using spot gold price from {symbol}: ${current_price:.2f}")
                         _market_data_cache = {'hist': hist, 'symbol': symbol}
                         _cache_timestamp = now
                         break
-                    elif symbol == "GLD" and current_price > 1000:
-                        # Only use GLD if spot symbols fail and GLD gives reasonable price
-                        logger.info(f"Using GLD price: ${current_price:.2f}")
+                    elif symbol in ["GLD", "IAU", "SGOL", "OUNZ", "AAAU"] and current_price > 1000:
+                        # Only use ETF symbols if spot symbols fail and ETF gives reasonable price
+                        logger.info(f"Using {symbol} price: ${current_price:.2f}")
                         _market_data_cache = {'hist': hist, 'symbol': symbol}
                         _cache_timestamp = now
                         break
@@ -148,14 +149,18 @@ def get_realtime_price_data():
                 time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
             # Try multiple symbols for better reliability - Prioritize XAU/USD spot price
-            symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD"]
+            symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
 
             for symbol in symbols_to_try:
                 try:
                     _last_api_call = time.time()
                     gold = yf.Ticker(symbol)
                     # Get very recent data with 1-minute intervals for real-time feel
-                    hist = gold.history(period="1d", interval="1m")
+                    # GC=F doesn't support 1m intervals, so use daily for futures
+                    if symbol == "GC=F":
+                        hist = gold.history(period="5d", interval="1d")
+                    else:
+                        hist = gold.history(period="1d", interval="1m")
 
                     if not hist.empty:
                         current_price = float(hist['Close'].iloc[-1])
@@ -603,14 +608,35 @@ def update_actual_prices_realtime():
 
     # Get real-time market data
     try:
-        gold = yf.Ticker("GC=F")
-        # Get recent data with higher frequency for real-time updates
-        # 2 days with 1-minute intervals
-        hist = gold.history(period="2d", interval="1m")
+        # Try multiple symbols for better reliability - Prioritize actual gold price (GC=F)
+        symbols_to_try = ["GC=F", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+        hist = None
 
-        if hist.empty:
-            # Fallback to daily data
-            hist = gold.history(period="1mo", interval="1d")
+        for symbol in symbols_to_try:
+            try:
+                gold = yf.Ticker(symbol)
+                # Get recent data with higher frequency for real-time updates
+                # 2 days with 1-minute intervals
+                hist = gold.history(period="2d", interval="1m")
+                if not hist.empty:
+                    break
+            except Exception as e:
+                if symbol == symbols_to_try[-1]:  # Last attempt
+                    logger.error(f"All symbols failed for real-time data: {e}")
+                continue
+
+        if hist is None or hist.empty:
+            # Fallback to daily data with same symbol selection
+            for symbol in symbols_to_try:
+                try:
+                    gold = yf.Ticker(symbol)
+                    hist = gold.history(period="1mo", interval="1d")
+                    if not hist.empty:
+                        break
+                except Exception as e:
+                    if symbol == symbols_to_try[-1]:  # Last attempt
+                        logger.error(f"All symbols failed for daily data: {e}")
+                    continue
 
         # Create a mapping of available dates
         available_dates = set()
@@ -700,10 +726,21 @@ def update_actual_prices():
 
     # First, get available market data to avoid repeated API calls
     try:
-        gold = yf.Ticker("GC=F")
-        # Get 30 days of data to check what dates are available
-        # Note: Using 1mo instead of 30d for better reliability with GC=F
-        hist = gold.history(period="1mo", interval="1d")
+        # Try multiple symbols for better reliability - Prioritize actual gold price (GC=F)
+        symbols_to_try = ["GC=F", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+        hist = None
+
+        for symbol in symbols_to_try:
+            try:
+                gold = yf.Ticker(symbol)
+                # Get 30 days of data to check what dates are available
+                hist = gold.history(period="1mo", interval="1d")
+                if not hist.empty:
+                    break
+            except Exception as e:
+                if symbol == symbols_to_try[-1]:  # Last attempt
+                    logger.error(f"All symbols failed for market data: {e}")
+                continue
 
         # Create a mapping of available dates
         available_dates = set()
@@ -880,10 +917,20 @@ def cleanup_invalid_predictions():
     cursor = conn.cursor()
 
     try:
-        # Get available market data dates
-        gold = yf.Ticker("GC=F")
-        # Note: Using 1mo instead of 30d for better reliability with GC=F
-        hist = gold.history(period="1mo", interval="1d")
+        # Get available market data dates - Prioritize actual gold price (GC=F)
+        symbols_to_try = ["GC=F", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+        hist = None
+
+        for symbol in symbols_to_try:
+            try:
+                gold = yf.Ticker(symbol)
+                hist = gold.history(period="1mo", interval="1d")
+                if not hist.empty:
+                    break
+            except Exception as e:
+                if symbol == symbols_to_try[-1]:  # Last attempt
+                    logger.error(f"All symbols failed for cleanup: {e}")
+                continue
 
         available_dates = set()
         for date in hist.index:
