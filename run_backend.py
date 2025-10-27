@@ -9,6 +9,9 @@ import signal
 import time
 from pathlib import Path
 
+# Get port from environment variable (Render provides this)
+PORT = int(os.getenv("PORT", 8001))
+
 
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully"""
@@ -73,11 +76,13 @@ def main():
     if not check_backend_structure():
         sys.exit(1)
 
-    print("📊 Backend will be available at: http://localhost:8001")
-    print("📡 WebSocket endpoint: ws://localhost:8001/ws/xauusd")
-    print("🌐 API docs: http://localhost:8001/docs")
-    print("🔄 Auto-reload: Enabled")
+    print(f"📊 Backend will be available at: http://0.0.0.0:{PORT}")
+    print(f"📡 WebSocket endpoint: ws://0.0.0.0:{PORT}/ws/xauusd")
+    print(f"🌐 API docs: http://0.0.0.0:{PORT}/docs")
+    print("🔄 Auto-reload: Disabled (Production Mode)")
     print("📝 Logs: Check terminal output")
+    print(f"🔧 Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    print(f"🔢 Port: {PORT}")
     print("\n" + "=" * 60)
     print("Press Ctrl+C to stop the server")
     print("=" * 60)
@@ -97,7 +102,7 @@ def main():
         uvicorn.run(
             "app.main:app",
             host="0.0.0.0",
-            port=8001,
+            port=PORT,
             reload=False,
             log_level="info",
             access_log=True

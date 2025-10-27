@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: kgf-gold-price-predictor
+    env: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_backend.py
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: CACHE_DURATION
+        value: 300
+      - key: API_COOLDOWN
+        value: 2
+      - key: REALTIME_CACHE_DURATION
+        value: 60

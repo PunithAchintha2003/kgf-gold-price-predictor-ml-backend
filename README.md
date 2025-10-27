@@ -1,6 +1,6 @@
 # KGF Gold Price Predictor - ML Backend
 
-A production-ready FastAPI backend service for XAU/USD (Gold) price prediction using advanced machine learning models. Features real-time data streaming, ML predictions, news sentiment analysis, and comprehensive price information services.
+A production-ready FastAPI backend service for XAU/USD (Gold) price prediction using advanced machine learning models with news sentiment analysis. Features real-time data streaming, ML predictions, comprehensive database tracking, and WebSocket support for live updates.
 
 ## 🎯 Project Status
 
@@ -64,12 +64,14 @@ python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 
 ### Technical Features
 
-- **FastAPI Backend**: High-performance async Python web framework
-- **ML Pipeline**: Automated model training and prediction pipeline
-- **Database Integration**: SQLite for prediction storage and historical tracking
-- **Error Handling**: Comprehensive error handling and logging
+- **FastAPI Backend**: High-performance async Python web framework with auto-reload
+- **ML Pipeline**: Automated model training, feature engineering, and prediction pipeline
+- **Database Integration**: SQLite with WAL mode, automated backups, and accuracy tracking
+- **Error Handling**: Comprehensive error handling, logging, and graceful fallbacks
 - **CORS Support**: Ready for frontend integration from any domain
-- **Production Ready**: Optimized for deployment and scaling
+- **Production Ready**: Optimized for deployment with connection pooling, caching, and rate limiting
+- **WebSocket Management**: Connection manager with automatic reconnection and broadcasting
+- **Multi-source Data**: Yahoo Finance with fallback to ETFs for reliability
 
 ## 📋 Requirements
 
@@ -159,11 +161,11 @@ export ALPHA_VANTAGE_KEY="your_alpha_vantage_key"
 
 | Method | Endpoint              | Description                           | Response                                                                                      |
 | ------ | --------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `GET`  | `/`                   | Health check endpoint                 | `{"message": "XAU/USD Real-time Data API with News Sentiment Analysis", "status": "running"}` |
-| `GET`  | `/health`             | Service health check                  | Health status and service info                                                                |
-| `GET`  | `/xauusd`             | Daily XAU/USD data with AI prediction | Historical data + prediction                                                                  |
-| `GET`  | `/xauusd/realtime`    | Real-time current price (10s updates) | Current price data with real-time updates                                                     |
-| `GET`  | `/xauusd/explanation` | Current price information             | Basic price data                                                                              |
+| `GET`  | `/`                   | Root endpoint                         | `{"message": "XAU/USD Real-time Data API with News Sentiment Analysis", "status": "running"}` |
+| `GET`  | `/health`             | Service health check                  | Health status, environment, cache settings                                                    |
+| `GET`  | `/xauusd`             | Daily XAU/USD data with AI prediction | Historical data + predictions + accuracy stats                                                |
+| `GET`  | `/xauusd/realtime`    | Real-time current price (10s updates) | Current price + predictions + historical data                                                 |
+| `GET`  | `/xauusd/explanation` | Current price information             | Current price data (simplified)                                                               |
 
 ### News Sentiment Endpoints
 
@@ -175,19 +177,22 @@ export ALPHA_VANTAGE_KEY="your_alpha_vantage_key"
 
 ### Data Management Endpoints
 
-| Method | Endpoint         | Description                  | Response                   |
-| ------ | ---------------- | ---------------------------- | -------------------------- |
-| `POST` | `/backup`        | Create backup of predictions | Backup status              |
-| `POST` | `/restore`       | Restore from backup          | Restore status             |
-| `GET`  | `/backup/status` | Get backup database status   | Backup statistics          |
-| `GET`  | `/performance`   | Performance monitoring       | Cache and connection stats |
+| Method | Endpoint         | Description                  | Response                                   |
+| ------ | ---------------- | ---------------------------- | ------------------------------------------ |
+| `POST` | `/backup`        | Create backup of predictions | Backup status message                      |
+| `POST` | `/restore`       | Restore from backup          | Restore status message                     |
+| `GET`  | `/backup/status` | Get backup database status   | Backup statistics and sync status          |
+| `GET`  | `/performance`   | Performance monitoring       | Cache stats and WebSocket connection count |
 
 ### Utility Endpoints
 
 | Method | Endpoint                     | Description                   | Response                  |
 | ------ | ---------------------------- | ----------------------------- | ------------------------- |
 | `GET`  | `/exchange-rate/{from}/{to}` | Currency exchange rates       | Exchange rate data        |
-| `GET`  | `/debug/realtime`            | Debug real-time data          | Real-time data debug info |
+| `GET`  | `/debug/realtime`            | Debug real-time data fetch    | Real-time data status     |
+| `GET`  | `/debug/symbols`             | Test gold data symbols        | Symbol availability check |
+| `POST` | `/debug/clear-cache`         | Clear all caches              | Cache clear confirmation  |
+| `GET`  | `/debug/xauusd-direct`       | Direct XAU/USD fetch          | Raw price fetch test      |
 | `GET`  | `/docs`                      | Interactive API documentation | Swagger UI                |
 
 ### WebSocket Endpoints
@@ -228,46 +233,57 @@ KGF-gold-price-predictor-ml-backend/
 ├── backend/
 │   ├── app/
 │   │   ├── __init__.py
-│   │   └── main.py                    # Main FastAPI application
+│   │   └── main.py                    # Main FastAPI application with all endpoints
 │   ├── config/
 │   │   ├── __init__.py
-│   │   ├── news_config.py            # News API configuration
-│   │   └── settings.py               # App settings
+│   │   ├── news_config.py            # News API and RSS feed configuration
+│   │   └── settings.py               # App settings and paths
 │   ├── data/
-│   │   ├── gold_predictions.db       # Main prediction database
-│   │   └── gold_predictions_backup.db # Backup database
-│   └── models/
-│       ├── __init__.py
-│       ├── lasso_model.py            # Lasso regression model
-│       ├── news_prediction.py        # News sentiment model
-│       ├── lasso_gold_model.pkl      # Trained Lasso model
-│       └── enhanced_lasso_gold_model.pkl # Enhanced model
-├── requirements.txt                  # Python dependencies (root level)
-├── run_backend.py                    # Backend runner script (root level)
-├── .gitignore                        # Git ignore rules
+│   │   ├── gold_predictions.db       # Main SQLite prediction database
+│   │   └── gold_predictions_backup.db # Backup SQLite database
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── lasso_model.py            # Lasso regression implementation
+│   │   ├── news_prediction.py        # News sentiment analysis and enhanced model
+│   │   ├── lasso_gold_model.pkl      # Trained Lasso model file
+│   │   └── enhanced_lasso_gold_model.pkl # News-enhanced model file
+│   └── requirements.txt              # Backend dependencies (loose versions)
+├── requirements.txt                  # Root-level dependencies (pinned versions)
+├── run_backend.py                    # Backend startup script
 └── README.md                         # This documentation
 ```
 
 ## 🔧 Technical Details
 
+### Background Tasks & Automation
+
+The application runs several automated background tasks:
+
+1. **Continuous Accuracy Updates** (every 15 minutes): Automatically updates actual prices for past predictions using real-time market data
+2. **WebSocket Broadcasting** (every 10 seconds): Broadcasts updated data to all connected clients
+3. **Same-Day Predictions**: Automatically updates predictions for today's date when market data becomes available
+4. **Database Backup**: Automatic backup after each prediction save
+5. **Cache Management**: Automatic cache invalidation and refresh
+
 ### Backend Architecture
 
 - **Framework**: FastAPI with async/await support for high performance
-- **Data Source**: Yahoo Finance Gold Futures (GC=F) as XAU/USD proxy via `yfinance`
-- **ML Engine**: Lasso Regression model with automated training pipeline
-- **News Analysis**: Multi-source news sentiment analysis
-- **Database**: SQLite for prediction storage and historical tracking
-- **WebSocket**: Real-time data streaming every 10 seconds
+- **Data Source**: Yahoo Finance Gold Futures (GC=F) as primary source, with fallbacks to GLD, IAU, SGOL ETFs via `yfinance`
+- **ML Engine**: Lasso Regression (primary) with News-Enhanced Lasso (enhanced) for sentiment-augmented predictions
+- **News Analysis**: Multi-source sentiment analysis from Yahoo Finance, NewsAPI, Alpha Vantage, and RSS feeds
+- **Database**: SQLite with WAL mode, optimized indexes, and backup/restore functionality
+- **WebSocket**: Real-time data streaming every 10 seconds with connection management
+- **Caching**: Multi-tier caching system for market data (300s) and real-time prices (60s)
 - **CORS**: Enabled for cross-origin requests from any frontend
 
 ### Data Flow
 
-1. **Market Data Collection**: Yahoo Finance API → FastAPI Backend
-2. **News Data Collection**: Multiple news sources → Sentiment analysis
-3. **ML Processing**: Historical data + News sentiment → Lasso Regression model → Predictions
-4. **Database Storage**: Predictions → SQLite Database
-5. **Real-time Updates**: WebSocket → Connected clients
-6. **API Responses**: REST endpoints → Frontend applications
+1. **Market Data Collection**: Yahoo Finance API (GC=F priority) → Multi-symbol fallback → Caching layer
+2. **News Data Collection**: Multiple sources (Yahoo, NewsAPI, Alpha Vantage, RSS) → TextBlob sentiment analysis → Feature engineering
+3. **ML Processing**: Historical data + Technical indicators + News sentiment → Lasso/Enhanced models → Predictions
+4. **Database Storage**: Predictions + Accuracy tracking → SQLite Database → Automatic backup
+5. **Real-time Updates**: WebSocket manager → Connected clients (10s intervals)
+6. **API Responses**: REST endpoints (18+) → Frontend applications with CORS support
 
 ## 📊 Current Performance Metrics
 
@@ -304,9 +320,11 @@ KGF-gold-price-predictor-ml-backend/
 | ------------------------------- | ------------------------------- | --------------------------------------------------- |
 | **Backend not starting**        | Check if port 8001 is available | `lsof -i :8001`                                     |
 | **API not responding**          | Ensure backend is running       | Visit http://localhost:8001                         |
-| **No data updates**             | Check internet connection       | Test Yahoo Finance access                           |
-| **WebSocket connection failed** | Verify WebSocket endpoint       | Check `/ws/xauusd` endpoint                         |
+| **No data updates**             | Check internet connection       | Test Yahoo Finance access (try GC=F, GLD, etc.)     |
+| **WebSocket connection failed** | Verify WebSocket endpoint       | Check `/ws/xauusd` endpoint with browser dev tools  |
 | **Module not found error**      | Install dependencies from root  | `pip install -r requirements.txt` from project root |
+| **Database errors**             | Check SQLite WAL mode           | Verify `data/` directory permissions                |
+| **News API failing**            | Check API keys in environment   | Set NEWS_API_KEY and ALPHA_VANTAGE_KEY              |
 
 ### Debug Commands
 
@@ -330,19 +348,20 @@ curl http://localhost:8001/xauusd
 - **Simplified Setup**: Consolidated run script (run_backend.py) at root level
 - **Python 3.11+**: Updated to use Python 3.11-3.13 for better performance and modern features
 - **Package Updates**: Upgraded to latest stable versions (pandas 2.2.2, numpy 1.26.4, scikit-learn 1.4.2)
-- **Database Optimization**: Preserved all historical prediction data
+- **Database Optimization**: SQLite with WAL mode, optimized indexes, and backup/restore functionality
 - **Model Streamlining**: Focused on Lasso Regression with news sentiment enhancement
-- **News Integration**: Comprehensive news sentiment analysis with multi-source fetching
-- **API Enhancement**: Added news sentiment, model comparison, and data management endpoints
-- **Performance Optimization**: Improved caching and reduced WebSocket update frequency (10s intervals)
-- **Documentation**: Updated README to reflect current project structure and setup
+- **News Integration**: Multi-source sentiment analysis (Yahoo, NewsAPI, Alpha Vantage, RSS)
+- **API Enhancement**: 18+ endpoints including news sentiment, model comparison, and debug utilities
+- **Performance Optimization**: Multi-tier caching (market data: 300s, real-time: 60s) and 10s WebSocket intervals
+- **Accuracy Tracking**: Automated actual price updates with continuous accuracy calculation
+- **Code Quality**: Comprehensive logging, error handling, and graceful fallbacks
 
 ### 🔄 Model Architecture
 
-| Model                   | R² Score | Status      | Purpose                 |
-| ----------------------- | -------- | ----------- | ----------------------- |
-| **Lasso Regression**    | 96.16%   | ✅ Primary  | Main prediction model   |
-| **News-Enhanced Lasso** | 96.16%+  | ✅ Enhanced | With sentiment analysis |
+| Model                   | Algorithm                 | Features                               | Status      |
+| ----------------------- | ------------------------- | -------------------------------------- | ----------- |
+| **Lasso Regression**    | Lasso (L1 regularization) | 35+ technical + fundamental indicators | ✅ Primary  |
+| **News-Enhanced Lasso** | Lasso + Sentiment         | All Lasso features + news sentiment    | ✅ Enhanced |
 
 ## 🛡️ Data Protection
 
@@ -369,6 +388,32 @@ This application is for educational and research purposes only. The AI predictio
 ## 📄 License
 
 This project is open source and available under the MIT License.
+
+## 🔗 Additional Resources
+
+- **API Documentation**: Interactive docs available at http://localhost:8001/docs when server is running
+- **Source Code**: All models and implementations are in the `backend/models/` directory
+- **Configuration**: Environment variables and settings in `backend/config/`
+- **Data**: SQLite databases in `backend/data/` with automatic backups
+
+## 🎓 Learning Resources
+
+### Implementation Highlights
+
+- **ML Models**: Lasso Regression with L1 regularization for feature selection (LassoCV for optimal alpha)
+- **Sentiment Analysis**: TextBlob with custom gold-specific keyword weighting and polarity scoring
+- **Feature Engineering**: 35+ indicators combining technical analysis (RSI, MACD, Bollinger), fundamentals (DXY, Treasury, VIX, Oil), and sentiment
+- **WebSocket**: Real-time data streaming with FastAPI WebSocket manager and connection pooling
+- **Database**: SQLite with WAL mode for concurrent reads, optimized indexes for query performance
+- **Caching**: Two-tier caching system to minimize API calls and improve response times
+- **Error Handling**: Graceful fallbacks across multiple data sources (GC=F → GLD → IAU → SGOL → OUNZ → AAAU)
+
+### Code Organization
+
+- **Models**: Separate classes for Lasso (`LassoGoldPredictor`) and Enhanced Lasso (`NewsEnhancedLassoPredictor`)
+- **Sentiment**: Dedicated `NewsSentimentAnalyzer` class with multi-source news fetching
+- **Database**: Context managers for connection pooling with automatic cleanup
+- **Endpoints**: Async/await pattern throughout for optimal performance
 
 ---
 
