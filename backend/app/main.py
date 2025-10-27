@@ -88,7 +88,8 @@ def get_cached_market_data():
             time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
         # Try multiple symbols for better reliability - Prioritize XAU/USD spot price
-        symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+        symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X",
+                          "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
         hist = None
 
         for symbol in symbols_to_try:
@@ -116,7 +117,8 @@ def get_cached_market_data():
                         break
                     elif symbol in ["GLD", "IAU", "SGOL", "OUNZ", "AAAU"] and current_price > 1000:
                         # Only use ETF symbols if spot symbols fail and ETF gives reasonable price
-                        logger.info(f"Using {symbol} price: ${current_price:.2f}")
+                        logger.info(
+                            f"Using {symbol} price: ${current_price:.2f}")
                         _market_data_cache = {'hist': hist, 'symbol': symbol}
                         _cache_timestamp = now
                         break
@@ -149,7 +151,8 @@ def get_realtime_price_data():
                 time.sleep(API_COOLDOWN - (current_time - _last_api_call))
 
             # Try multiple symbols for better reliability - Prioritize XAU/USD spot price
-            symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+            symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X",
+                              "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
 
             for symbol in symbols_to_try:
                 try:
@@ -656,7 +659,12 @@ def update_actual_prices_realtime():
 
     updated_count = 0
     skipped_dates = set()  # Track which dates we've already logged as skipped
-    logger.info(f"Found {len(predictions)} predictions to evaluate")
+
+    if len(predictions) == 0:
+        logger.debug(
+            "No past predictions need evaluation (all already evaluated)")
+    else:
+        logger.info(f"Found {len(predictions)} predictions to evaluate")
     for pred_id, pred_date, pred_price, current_actual, current_accuracy in predictions:
         try:
             # Process all predictions including October 11th
@@ -756,7 +764,13 @@ def update_actual_prices():
         return
 
     updated_count = 0
-    logger.info(f"Found {len(predictions)} predictions to evaluate")
+
+    if len(predictions) == 0:
+        logger.debug(
+            "No predictions need evaluation (all already have actual prices)")
+    else:
+        logger.info(f"Found {len(predictions)} predictions to evaluate")
+
     for pred_id, pred_date, pred_price in predictions:
         try:
             # Get actual price for that specific date using a small range
