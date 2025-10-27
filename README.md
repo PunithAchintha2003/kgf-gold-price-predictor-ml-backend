@@ -266,10 +266,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 This application is for **educational and research purposes only**. AI predictions should not be considered financial advice. Always consult qualified financial professionals before making investment decisions.
 
-## 👥 Authors
-
-- **KGF Team** - _Initial work_
-
 ## 🙏 Acknowledgments
 
 - Yahoo Finance for market data
