@@ -16,6 +16,40 @@ import time
 from contextlib import contextmanager
 from models.lasso_model import LassoGoldPredictor
 from models.news_prediction import NewsEnhancedLassoPredictor, NewsSentimentAnalyzer
+import requests
+
+# Configure yfinance to avoid Yahoo Finance blocking
+# Apply patches to prevent bot detection
+try:
+    # Try to set a custom user agent
+    import yfinance.const as yf_const
+    if hasattr(yf_const, 'USER_AGENT'):
+        yf_const.USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+except:
+    pass
+
+
+def create_yf_ticker(symbol, session=None):
+    """Create a yfinance ticker with custom headers to bypass Yahoo blocking"""
+    try:
+        # Create a custom session with headers
+        if session is None:
+            session = requests.Session()
+            session.headers.update({
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Encoding': 'gzip, deflate, br',
+            })
+
+        # Create ticker with custom session
+        ticker = yf.Ticker(symbol, session=session)
+        return ticker
+    except Exception as e:
+        logger.warning(
+            f"Failed to create custom ticker for {symbol}: {e}, using default")
+        return yf.Ticker(symbol)
+
 
 # Environment configuration
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
@@ -95,8 +129,12 @@ def get_cached_market_data():
         for symbol in symbols_to_try:
             try:
                 _last_api_call = time.time()
-                gold = yf.Ticker(symbol)
+                gold = create_yf_ticker(symbol)
                 hist = gold.history(period="1mo", interval="1d")
+
+                if hist.empty:
+                    logger.warning(f"Empty history data for {symbol}")
+
                 if not hist.empty:
                     # Validate that we're getting a reasonable gold price (not ETF price)
                     current_price = float(hist['Close'].iloc[-1])
@@ -123,12 +161,17 @@ def get_cached_market_data():
                         _cache_timestamp = now
                         break
             except Exception as e:
-                # Only log errors, not warnings for better performance
-                if symbol == symbols_to_try[-1]:  # Only log on last attempt
-                    logger.error(f"All gold data sources failed: {e}")
+                # Log detailed error for each symbol
+                logger.error(
+                    f"Error fetching {symbol}: {type(e).__name__}: {e}")
+                if symbol == symbols_to_try[-1]:  # Summary on last attempt
+                    logger.error(
+                        f"All {len(symbols_to_try)} gold data sources failed")
                 continue
 
         if hist is None or hist.empty:
+            logger.error(
+                "No market data available from any symbol - returning None")
             return None, None
 
     return _market_data_cache.get('hist'), _market_data_cache.get('symbol')
@@ -157,7 +200,7 @@ def get_realtime_price_data():
             for symbol in symbols_to_try:
                 try:
                     _last_api_call = time.time()
-                    gold = yf.Ticker(symbol)
+                    gold = create_yf_ticker(symbol)
                     # Get very recent data with 1-minute intervals for real-time feel
                     # GC=F doesn't support 1m intervals, so use daily for futures
                     if symbol == "GC=F":
@@ -617,7 +660,7 @@ def update_actual_prices_realtime():
 
         for symbol in symbols_to_try:
             try:
-                gold = yf.Ticker(symbol)
+                gold = create_yf_ticker(symbol)
                 # Get recent data with higher frequency for real-time updates
                 # 2 days with 1-minute intervals
                 hist = gold.history(period="2d", interval="1m")
@@ -632,7 +675,7 @@ def update_actual_prices_realtime():
             # Fallback to daily data with same symbol selection
             for symbol in symbols_to_try:
                 try:
-                    gold = yf.Ticker(symbol)
+                    gold = create_yf_ticker(symbol)
                     hist = gold.history(period="1mo", interval="1d")
                     if not hist.empty:
                         break
@@ -740,7 +783,7 @@ def update_actual_prices():
 
         for symbol in symbols_to_try:
             try:
-                gold = yf.Ticker(symbol)
+                gold = create_yf_ticker(symbol)
                 # Get 30 days of data to check what dates are available
                 hist = gold.history(period="1mo", interval="1d")
                 if not hist.empty:
@@ -878,7 +921,7 @@ def update_same_day_predictions():
 
     # Get today's market data
     try:
-        gold = yf.Ticker("GC=F")
+        gold = create_yf_ticker("GC=F")
         hist = gold.history(period="1d", interval="1d")
 
         if hist.empty:
@@ -937,7 +980,7 @@ def cleanup_invalid_predictions():
 
         for symbol in symbols_to_try:
             try:
-                gold = yf.Ticker(symbol)
+                gold = create_yf_ticker(symbol)
                 hist = gold.history(period="1mo", interval="1d")
                 if not hist.empty:
                     break
@@ -1112,7 +1155,7 @@ async def debug_symbols():
 
     for symbol in symbols_to_test:
         try:
-            gold = yf.Ticker(symbol)
+            gold = create_yf_ticker(symbol)
             hist = gold.history(period="1d", interval="1d")
             if not hist.empty:
                 current_price = float(hist['Close'].iloc[-1])
@@ -1163,43 +1206,58 @@ async def clear_cache():
 
 @app.get("/debug/xauusd-direct")
 async def debug_xauusd_direct():
-    """Direct XAU/USD price fetch bypassing cache"""
-    symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X"]
+    """Direct XAU/USD price fetch bypassing cache with detailed diagnostics"""
+    symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD"]
+    results = []
 
     for symbol in symbols_to_try:
         try:
-            gold = yf.Ticker(symbol)
+            gold = create_yf_ticker(symbol)
             hist = gold.history(period="1d", interval="1d")
 
             if not hist.empty:
                 current_price = float(hist['Close'].iloc[-1])
 
+                results.append({
+                    "symbol": symbol,
+                    "status": "success",
+                    "price": current_price,
+                    "data_points": len(hist),
+                    "latest_date": hist.index[-1].strftime('%Y-%m-%d') if len(hist) > 0 else None,
+                    "type": "Spot Gold" if current_price > 1000 else "ETF or Invalid"
+                })
+
                 # Only return if price is reasonable for spot gold
-                if current_price > 1000:
+                if current_price > 1000 and symbol in ["GC=F", "GOLD", "XAUUSD=X"]:
                     return {
                         "status": "success",
                         "symbol": symbol,
                         "price": current_price,
                         "type": "Spot Gold",
                         "message": f"Direct fetch successful from {symbol}",
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "all_tested": results
                     }
-                else:
-                    return {
-                        "status": "warning",
-                        "symbol": symbol,
-                        "price": current_price,
-                        "type": "ETF or Invalid",
-                        "message": f"Price too low for spot gold: ${current_price:.2f}",
-                        "timestamp": datetime.now().isoformat()
-                    }
+            else:
+                results.append({
+                    "symbol": symbol,
+                    "status": "empty",
+                    "message": "No data returned"
+                })
         except Exception as e:
-            continue
+            results.append({
+                "symbol": symbol,
+                "status": "error",
+                "error": str(e),
+                "error_type": type(e).__name__
+            })
+            logger.error(f"Error testing {symbol}: {e}")
 
     return {
         "status": "error",
         "message": "All XAU/USD symbols failed",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "results": results
     }
 
 
@@ -1722,7 +1780,7 @@ async def get_exchange_rate(from_currency: str, to_currency: str):
         else:
             # For other currency pairs, try using yfinance
             try:
-                ticker = yf.Ticker(f"{from_currency}{to_currency}=X")
+                ticker = create_yf_ticker(f"{from_currency}{to_currency}=X")
                 hist = ticker.history(period="1d", interval="1m")
 
                 if not hist.empty:
