@@ -90,13 +90,27 @@ _last_api_call = 0
 _realtime_cache = {}
 _realtime_cache_timestamp = None
 # REALTIME_CACHE_DURATION is now set from environment variables above
+# Track the last date to invalidate cache on date change
+_last_cache_date = None
 
 
 def get_cached_market_data():
     """Get cached market data or fetch new data if cache is expired - Optimized"""
-    global _market_data_cache, _cache_timestamp, _last_api_call
+    global _market_data_cache, _cache_timestamp, _last_api_call, _last_cache_date
 
     now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+
+    # Clear cache if date changed (new day started)
+    if _last_cache_date is not None and _last_cache_date != today:
+        logger.info(
+            f"Date changed from {_last_cache_date} to {today}, clearing cache")
+        _market_data_cache = {}
+        _cache_timestamp = None
+        _realtime_cache = {}
+        _realtime_cache_timestamp = None
+        _last_cache_date = today
+
     if (_cache_timestamp is None or
         (now - _cache_timestamp).total_seconds() > CACHE_DURATION or
             not _market_data_cache):
@@ -137,6 +151,7 @@ def get_cached_market_data():
                             f"Using spot gold price from {symbol}: ${current_price:.2f}")
                         _market_data_cache = {'hist': hist, 'symbol': symbol}
                         _cache_timestamp = now
+                        _last_cache_date = today
                         break
                     elif symbol in ["GLD", "IAU", "SGOL", "OUNZ", "AAAU"] and current_price > 1000:
                         # Only use ETF symbols if spot symbols fail and ETF gives reasonable price
@@ -144,6 +159,7 @@ def get_cached_market_data():
                             f"Using {symbol} price: ${current_price:.2f}")
                         _market_data_cache = {'hist': hist, 'symbol': symbol}
                         _cache_timestamp = now
+                        _last_cache_date = today
                         break
             except Exception as e:
                 # Log detailed error for each symbol
@@ -278,14 +294,19 @@ except:
 # Initialize News-Enhanced Lasso predictor
 news_enhanced_predictor = NewsEnhancedLassoPredictor()
 try:
-    news_enhanced_predictor.load_enhanced_model(
-        str(BACKEND_DIR / 'models/enhanced_lasso_gold_model.pkl'))
+    enhanced_model_path = str(
+        BACKEND_DIR / 'models/enhanced_lasso_gold_model.pkl')
+    logger.info(
+        f"Attempting to load news-enhanced model from: {enhanced_model_path}")
+    news_enhanced_predictor.load_enhanced_model(enhanced_model_path)
     logger.info("News-enhanced Lasso model loaded successfully")
-except:
+except Exception as e:
     # Skip training on startup to avoid rate limiting
     # The regular Lasso model will be used instead
-    logger.info(
-        "News-enhanced Lasso model not found - using regular Lasso model (train offline to avoid rate limits)")
+    logger.warning(
+        f"News-enhanced Lasso model not found or failed to load: {e} - using regular Lasso model (train offline to avoid rate limits)")
+    logger.debug(
+        f"Exception details: {type(e).__name__}: {str(e)}", exc_info=True)
     # Optionally train offline with: python -m models.news_prediction
 
 
@@ -1400,9 +1421,11 @@ def get_xauusd_daily_data():
             }
 
         if not hist.empty:
-            # Check if we already made a prediction for today
+            # Check if we already made a prediction for the next day
             today = datetime.now().strftime("%Y-%m-%d")
-            next_day = (hist.index[-1] + timedelta(days=1)
+            # Use today as the base for calculating next day, not historical data
+            # This ensures predictions are for tomorrow, not yesterday's next day
+            next_day = (datetime.now() + timedelta(days=1)
                         ).strftime("%Y-%m-%d")
 
             # Make predictions if none exists for the next day
