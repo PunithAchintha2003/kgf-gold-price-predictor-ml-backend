@@ -385,6 +385,18 @@ def init_backup_database():
 
         conn.commit()
 
+        # Ensure legacy backups have the new column (migration)
+        try:
+            cursor.execute("PRAGMA table_info(predictions)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if "backup_created_at" not in columns:
+                cursor.execute(
+                    "ALTER TABLE predictions ADD COLUMN backup_created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+                )
+                conn.commit()
+        except Exception as e:
+            logger.error(f"Error migrating backup DB schema: {e}")
+
 
 def backup_predictions():
     """Backup all predictions to backup database"""
@@ -410,10 +422,27 @@ def backup_predictions():
 
         # Insert all predictions into backup database
         for pred in predictions:
-            backup_cursor.execute('''
-                INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage, created_at, updated_at, backup_created_at)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ''', pred)
+            try:
+                backup_cursor.execute('''
+                    INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage, created_at, updated_at, backup_created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', pred)
+            except sqlite3.OperationalError as e:
+                # Handle legacy schema missing backup_created_at column by migrating then retrying once
+                if "no column named backup_created_at" in str(e):
+                    try:
+                        backup_cursor.execute(
+                            "ALTER TABLE predictions ADD COLUMN backup_created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+                        )
+                        backup_cursor.execute('''
+                            INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage, created_at, updated_at, backup_created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        ''', pred)
+                    except Exception as e2:
+                        logger.error(f"Backup insert failed after migration: {e2}")
+                        raise
+                else:
+                    raise
 
         backup_conn.commit()
 
