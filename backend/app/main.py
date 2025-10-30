@@ -55,6 +55,9 @@ logger.info(
 
 # Paths relative to backend directory
 BACKEND_DIR = Path(__file__).resolve().parent.parent
+# Ensure data directory exists (important on fresh/ephemeral deployments)
+DATA_DIR = BACKEND_DIR / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 # Database setup - Optimized
 DB_PATH = str(BACKEND_DIR / "data/gold_predictions.db")
 BACKUP_DB_PATH = str(BACKEND_DIR / "data/gold_predictions_backup.db")
@@ -471,26 +474,29 @@ def restore_from_backup():
 
 def save_prediction(prediction_date, predicted_price, actual_price=None):
     """Save prediction to database with correct accuracy calculation - Optimized"""
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
 
-        # Calculate accuracy if actual price is available (accuracy = 100 - error_percentage)
-        accuracy = None
-        if actual_price:
-            error_percentage = abs(
-                predicted_price - actual_price) / actual_price * 100
-            # Accuracy - higher is better
-            accuracy = max(0, 100 - error_percentage)
+            # Calculate accuracy if actual price is available (accuracy = 100 - error_percentage)
+            accuracy = None
+            if actual_price:
+                error_percentage = abs(
+                    predicted_price - actual_price) / actual_price * 100
+                # Accuracy - higher is better
+                accuracy = max(0, 100 - error_percentage)
 
-        cursor.execute('''
-            INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage)
-            VALUES (?, ?, ?, ?)
-        ''', (prediction_date, predicted_price, actual_price, accuracy))
+            cursor.execute('''
+                INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage)
+                VALUES (?, ?, ?, ?)
+            ''', (prediction_date, predicted_price, actual_price, accuracy))
 
-        conn.commit()
+            conn.commit()
 
-    # Automatically backup after saving
-    backup_predictions()
+        # Automatically backup after saving
+        backup_predictions()
+    except Exception as e:
+        logger.error(f"Error saving prediction for {prediction_date}: {e}")
 
 
 def get_historical_predictions(days=30):
@@ -1073,6 +1079,60 @@ async def restore_backup():
         "timestamp": datetime.now().isoformat()
     }
 
+
+@app.get("/debug/db")
+async def debug_db():
+    """Diagnostics for database: counts and latest records"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+
+        cursor.execute('SELECT COUNT(*) FROM predictions')
+        total = cursor.fetchone()[0]
+
+        cursor.execute('SELECT MAX(prediction_date) FROM predictions')
+        max_pred_date = cursor.fetchone()[0]
+
+        cursor.execute('SELECT MAX(created_at) FROM predictions')
+        max_created_at = cursor.fetchone()[0]
+
+        cursor.execute('''
+            SELECT prediction_date, predicted_price, actual_price, accuracy_percentage, created_at
+            FROM predictions
+            ORDER BY created_at DESC
+            LIMIT 5
+        ''')
+        latest = cursor.fetchall()
+
+        conn.close()
+
+        latest_rows = [
+            {
+                "prediction_date": row[0],
+                "predicted_price": row[1],
+                "actual_price": row[2],
+                "accuracy_percentage": row[3],
+                "created_at": row[4]
+            }
+            for row in latest
+        ]
+
+        return {
+            "status": "success",
+            "db_path": DB_PATH,
+            "total_predictions": total,
+            "max_prediction_date": max_pred_date,
+            "max_created_at": max_created_at,
+            "latest": latest_rows,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"DB debug error: {e}",
+            "db_path": DB_PATH,
+            "timestamp": datetime.now().isoformat()
+        }
 
 @app.get("/backup/status")
 async def backup_status():
