@@ -3,7 +3,10 @@
   "builds": [
     {
       "src": "run_backend.py",
-      "use": "@vercel/python"
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "250mb"
+      }
     }
   ],
   "routes": [
@@ -14,6 +17,12 @@
   ],
   "env": {
     "USE_POSTGRESQL": "true"
+  },
+  "functions": {
+    "run_backend.py": {
+      "maxDuration": 60,
+      "memory": 3008
+    }
   }
 }
 
