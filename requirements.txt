@@ -19,6 +19,9 @@ requests>=2.31.0
 textblob==0.17.1
 feedparser>=6.0.11
 
+# Database - PostgreSQL support
+psycopg2-binary>=2.9.9
+
 # Build dependencies to ensure proper compilation
 setuptools>=65.0.0
 wheel>=0.40.0

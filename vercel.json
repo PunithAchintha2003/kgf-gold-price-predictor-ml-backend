@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "run_backend.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "run_backend.py"
+    }
+  ],
+  "env": {
+    "USE_POSTGRESQL": "true"
+  }
+}
+

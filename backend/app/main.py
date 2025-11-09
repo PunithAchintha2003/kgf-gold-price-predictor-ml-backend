@@ -14,6 +14,16 @@ import sqlite3
 import os
 import time
 from contextlib import contextmanager
+
+# PostgreSQL support
+try:
+    import psycopg2
+    from psycopg2 import pool
+    from psycopg2.extras import RealDictCursor
+    POSTGRESQL_AVAILABLE = True
+except ImportError:
+    POSTGRESQL_AVAILABLE = False
+    psycopg2 = None
 from models.lasso_model import LassoGoldPredictor
 from models.news_prediction import NewsEnhancedLassoPredictor, NewsSentimentAnalyzer
 import requests
@@ -58,30 +68,119 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 # Ensure data directory exists (important on fresh/ephemeral deployments)
 DATA_DIR = BACKEND_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-# Database setup - Optimized
+
+# Database configuration - PostgreSQL (default) or SQLite (fallback)
+# Default to PostgreSQL for production deployments
+USE_POSTGRESQL = os.getenv("USE_POSTGRESQL", "true").lower() == "true"
+POSTGRESQL_HOST = os.getenv("POSTGRESQL_HOST", "localhost")
+POSTGRESQL_PORT = os.getenv("POSTGRESQL_PORT", "5432")
+POSTGRESQL_DATABASE = os.getenv("POSTGRESQL_DATABASE", "gold_predictor")
+POSTGRESQL_USER = os.getenv("POSTGRESQL_USER", "postgres")
+POSTGRESQL_PASSWORD = os.getenv("POSTGRESQL_PASSWORD", "postgres")
+
+# SQLite paths (fallback)
 DB_PATH = str(BACKEND_DIR / "data/gold_predictions.db")
 BACKUP_DB_PATH = str(BACKEND_DIR / "data/gold_predictions_backup.db")
+
+# PostgreSQL connection pool
+_postgresql_pool = None
 
 # Database connection context manager for better performance
 
 
-@contextmanager
-def get_db_connection(db_path=DB_PATH):
-    """Context manager for database connections - Optimized"""
-    conn = None
+def get_db_type():
+    """Get current database type"""
+    use_postgresql = USE_POSTGRESQL and POSTGRESQL_AVAILABLE and _postgresql_pool is not None
+    return "postgresql" if use_postgresql else "sqlite"
+
+
+def get_date_function(days_offset=0):
+    """Get database-appropriate date function"""
+    db_type = get_db_type()
+    if db_type == "postgresql":
+        if days_offset == 0:
+            return "CURRENT_DATE"
+        elif days_offset < 0:
+            return f"CURRENT_DATE - INTERVAL '{abs(days_offset)} days'"
+        else:
+            return f"CURRENT_DATE + INTERVAL '{days_offset} days'"
+    else:
+        # SQLite
+        if days_offset == 0:
+            return "date('now')"
+        else:
+            return f"date('now', '{days_offset:+d} days')"
+
+
+def init_postgresql_pool():
+    """Initialize PostgreSQL connection pool"""
+    global _postgresql_pool
+    if not POSTGRESQL_AVAILABLE:
+        logger.warning("PostgreSQL library not available, falling back to SQLite")
+        return False
+    
     try:
-        conn = sqlite3.connect(db_path, timeout=30.0)
-        conn.execute("PRAGMA journal_mode=WAL")  # Better performance
-        conn.execute("PRAGMA synchronous=NORMAL")  # Faster writes
-        conn.execute("PRAGMA cache_size=10000")  # Larger cache
-        yield conn
+        _postgresql_pool = psycopg2.pool.SimpleConnectionPool(
+            1, 20,  # min and max connections
+            host=POSTGRESQL_HOST,
+            port=POSTGRESQL_PORT,
+            database=POSTGRESQL_DATABASE,
+            user=POSTGRESQL_USER,
+            password=POSTGRESQL_PASSWORD
+        )
+        if _postgresql_pool:
+            logger.info(f"PostgreSQL connection pool initialized: {POSTGRESQL_DATABASE}")
+            return True
+    except Exception as e:
+        logger.error(f"Failed to initialize PostgreSQL pool: {e}")
+        logger.warning("Falling back to SQLite")
+        return False
+    return False
+
+
+@contextmanager
+def get_db_connection(db_path=None):
+    """Context manager for database connections - Supports PostgreSQL and SQLite"""
+    conn = None
+    use_postgresql = USE_POSTGRESQL and POSTGRESQL_AVAILABLE and _postgresql_pool is not None
+    
+    try:
+        if use_postgresql:
+            # Use PostgreSQL
+            conn = _postgresql_pool.getconn()
+            if conn:
+                yield conn
+        else:
+            # Fallback to SQLite
+            if db_path is None:
+                db_path = DB_PATH
+            conn = sqlite3.connect(db_path, timeout=30.0)
+            conn.execute("PRAGMA journal_mode=WAL")  # Better performance
+            conn.execute("PRAGMA synchronous=NORMAL")  # Faster writes
+            conn.execute("PRAGMA cache_size=10000")  # Larger cache
+            yield conn
     except Exception as e:
         if conn:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except:
+                pass
         raise e
     finally:
         if conn:
-            conn.close()
+            if use_postgresql:
+                try:
+                    # Return connection to pool (don't close it)
+                    _postgresql_pool.putconn(conn)
+                except Exception as e:
+                    logger.error(f"Error returning connection to pool: {e}")
+                    # If pool is full or connection is bad, close it
+                    try:
+                        conn.close()
+                    except:
+                        pass
+            else:
+                conn.close()
 
 
 # Optimized cache for market data to reduce API calls
@@ -97,8 +196,12 @@ _realtime_cache_timestamp = None
 _last_cache_date = None
 
 
-def get_cached_market_data():
-    """Get cached market data or fetch new data if cache is expired - Optimized"""
+def get_cached_market_data(period="3mo"):
+    """Get cached market data or fetch new data if cache is expired - Optimized
+    
+    Args:
+        period: Period for historical data (e.g., "1mo", "3mo", "90d"). Default: "3mo"
+    """
     global _market_data_cache, _cache_timestamp, _last_api_call, _last_cache_date
 
     now = datetime.now()
@@ -132,7 +235,7 @@ def get_cached_market_data():
             try:
                 _last_api_call = time.time()
                 gold = create_yf_ticker(symbol)
-                hist = gold.history(period="1mo", interval="1d")
+                hist = gold.history(period=period, interval="1d")
 
                 if hist.empty:
                     logger.warning(f"Empty history data for {symbol}")
@@ -314,50 +417,95 @@ except Exception as e:
 
 
 def init_database():
-    """Initialize SQLite database for storing predictions - Optimized"""
+    """Initialize database (PostgreSQL or SQLite) for storing predictions"""
+    use_postgresql = USE_POSTGRESQL and POSTGRESQL_AVAILABLE and _postgresql_pool is not None
+    
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
-        # Create predictions table with optimized indexes
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS predictions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                prediction_date TEXT NOT NULL,
-                predicted_price REAL NOT NULL,
-                actual_price REAL,
-                accuracy_percentage REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+        if use_postgresql:
+            # PostgreSQL syntax
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS predictions (
+                    id SERIAL PRIMARY KEY,
+                    prediction_date DATE NOT NULL,
+                    predicted_price REAL NOT NULL,
+                    actual_price REAL,
+                    accuracy_percentage REAL,
+                    prediction_method TEXT DEFAULT 'Lasso Regression',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
 
-        # Create historical data table for ghost line
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS historical_predictions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                predicted_price REAL NOT NULL,
-                actual_price REAL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS historical_predictions (
+                    id SERIAL PRIMARY KEY,
+                    date DATE NOT NULL,
+                    predicted_price REAL NOT NULL,
+                    actual_price REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
 
-        # Create indexes for better performance
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_prediction_date ON predictions(prediction_date)
-        ''')
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_created_at ON predictions(created_at)
-        ''')
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_actual_price ON predictions(actual_price)
-        ''')
+            # Create indexes
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_prediction_date ON predictions(prediction_date)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_created_at ON predictions(created_at)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_actual_price ON predictions(actual_price)
+            ''')
+        else:
+            # SQLite syntax
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS predictions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    prediction_date TEXT NOT NULL,
+                    predicted_price REAL NOT NULL,
+                    actual_price REAL,
+                    accuracy_percentage REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS historical_predictions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    predicted_price REAL NOT NULL,
+                    actual_price REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
+            # Create indexes
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_prediction_date ON predictions(prediction_date)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_created_at ON predictions(created_at)
+            ''')
+            cursor.execute('''
+                CREATE INDEX IF NOT EXISTS idx_actual_price ON predictions(actual_price)
+            ''')
 
         conn.commit()
+        db_type = "PostgreSQL" if use_postgresql else "SQLite"
+        logger.info(f"Database initialized successfully: {db_type}")
 
 
 def init_backup_database():
-    """Initialize backup SQLite database for storing predictions - Optimized"""
+    """Initialize backup database (SQLite only for now) - Optimized"""
+    # Backup database is always SQLite (separate file)
+    # Skip if using PostgreSQL (backup can be handled differently)
+    if USE_POSTGRESQL and POSTGRESQL_AVAILABLE and _postgresql_pool is not None:
+        logger.info("PostgreSQL enabled - skipping SQLite backup database initialization")
+        return
+    
     with get_db_connection(BACKUP_DB_PATH) as conn:
         cursor = conn.cursor()
 
@@ -439,7 +587,8 @@ def backup_predictions():
                             VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                         ''', pred)
                     except Exception as e2:
-                        logger.error(f"Backup insert failed after migration: {e2}")
+                        logger.error(
+                            f"Backup insert failed after migration: {e2}")
                         raise
                 else:
                     raise
@@ -501,9 +650,13 @@ def restore_from_backup():
         return False
 
 
-def save_prediction(prediction_date, predicted_price, actual_price=None):
+def save_prediction(prediction_date, predicted_price, actual_price=None, prediction_method=None):
     """Save prediction to database with correct accuracy calculation - Optimized"""
     try:
+        # Get prediction method if not provided
+        if prediction_method is None:
+            prediction_method = get_ml_model_display_name()
+
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
@@ -515,43 +668,108 @@ def save_prediction(prediction_date, predicted_price, actual_price=None):
                 # Accuracy - higher is better
                 accuracy = max(0, 100 - error_percentage)
 
-            cursor.execute('''
-                INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage)
-                VALUES (?, ?, ?, ?)
-            ''', (prediction_date, predicted_price, actual_price, accuracy))
+            # Insert prediction (database-agnostic)
+            db_type = get_db_type()
+            if db_type == "postgresql":
+                # PostgreSQL always has prediction_method column
+                cursor.execute('''
+                    INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage, prediction_method)
+                    VALUES (%s, %s, %s, %s, %s)
+                ''', (prediction_date, predicted_price, actual_price, accuracy, prediction_method))
+            else:
+                # SQLite - check if prediction_method column exists
+                try:
+                    cursor.execute("PRAGMA table_info(predictions)")
+                    columns = [row[1] for row in cursor.fetchall()]
+                    has_prediction_method = 'prediction_method' in columns
+                except:
+                    has_prediction_method = False
+
+                if has_prediction_method:
+                    cursor.execute('''
+                        INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage, prediction_method)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (prediction_date, predicted_price, actual_price, accuracy, prediction_method))
+                else:
+                    cursor.execute('''
+                        INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage)
+                        VALUES (?, ?, ?, ?)
+                    ''', (prediction_date, predicted_price, actual_price, accuracy))
 
             conn.commit()
+            logger.info(
+                f"Successfully saved prediction for {prediction_date}: ${predicted_price:.2f} using {prediction_method}")
 
         # Automatically backup after saving
-        backup_predictions()
+        try:
+            backup_predictions()
+        except Exception as backup_error:
+            logger.warning(
+                f"Prediction saved but backup failed: {backup_error}")
+
+        return True
     except Exception as e:
-        logger.error(f"Error saving prediction for {prediction_date}: {e}")
+        logger.error(
+            f"Error saving prediction for {prediction_date}: {e}", exc_info=True)
+        return False
 
 
-def get_historical_predictions(days=30):
+def get_historical_predictions(days=90):
     """Get historical predictions for ghost line - all predictions including future ones - Optimized"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT prediction_date, predicted_price, actual_price
-            FROM predictions p1
-            WHERE prediction_date >= date('now', '-{} days')
-            AND p1.created_at = (
-                SELECT MAX(p2.created_at)
-                FROM predictions p2
-                WHERE p2.prediction_date = p1.prediction_date
-            )
-            ORDER BY prediction_date
-        '''.format(days))
+        
+        date_func = get_date_function(-days)
+        
+        # Get the most recent prediction for each date (handle duplicates)
+        # Database-agnostic query
+        db_type = get_db_type()
+        if db_type == "postgresql":
+            cursor.execute('''
+                SELECT prediction_date, predicted_price, actual_price
+                FROM predictions p1
+                WHERE prediction_date >= CURRENT_DATE - INTERVAL %s
+                AND p1.created_at = (
+                    SELECT MAX(p2.created_at)
+                    FROM predictions p2
+                    WHERE p2.prediction_date = p1.prediction_date
+                )
+                ORDER BY prediction_date ASC
+            ''', (f'{days} days',))
+        else:
+            cursor.execute(f'''
+                SELECT prediction_date, predicted_price, actual_price
+                FROM predictions p1
+                WHERE prediction_date >= {date_func}
+                AND p1.created_at = (
+                    SELECT MAX(p2.created_at)
+                    FROM predictions p2
+                    WHERE p2.prediction_date = p1.prediction_date
+                )
+                ORDER BY prediction_date ASC
+            ''')
 
         results = cursor.fetchall()
 
-    return [{
-        'date': row[0],
-        'predicted_price': row[1],
-        'actual_price': row[2]
-    } for row in results]
+    # Convert to list of dictionaries with proper formatting
+    predictions = []
+    for row in results:
+        # Convert date to string format (YYYY-MM-DD) to match data format
+        date_value = row[0]
+        if hasattr(date_value, 'strftime'):
+            date_str = date_value.strftime('%Y-%m-%d')
+        elif isinstance(date_value, str):
+            date_str = date_value
+        else:
+            date_str = str(date_value)
+        
+        predictions.append({
+            'date': date_str,
+            'predicted_price': round(float(row[1]), 2) if row[1] is not None else None,
+            'actual_price': round(float(row[2]), 2) if row[2] is not None else None
+        })
+
+    return predictions
 
 
 def get_ml_model_display_name():
@@ -568,66 +786,66 @@ def get_ml_model_display_name():
 
 def get_accuracy_stats():
     """Get accuracy statistics for SMC method with real-time updates - only unique dates"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    # Get accuracy for unique predictions with actual prices (matching chart display)
-    cursor.execute('''
-        SELECT AVG(accuracy_percentage), COUNT(DISTINCT prediction_date)
-        FROM predictions p1
-        WHERE accuracy_percentage IS NOT NULL
-        AND prediction_date >= date('now', '-30 days')
-        AND prediction_date != '2025-10-13'
-        AND p1.created_at = (
-            SELECT MAX(p2.created_at)
-            FROM predictions p2
-            WHERE p2.prediction_date = p1.prediction_date
-        )
-    ''')
-
-    accuracy_result = cursor.fetchone()
-
-    # Get total unique prediction dates (matching chart display)
-    cursor.execute('''
-        SELECT COUNT(DISTINCT prediction_date)
-        FROM predictions p1
-        WHERE prediction_date >= date('now', '-30 days')
-        AND prediction_date != '2025-10-13'
-        AND p1.created_at = (
-            SELECT MAX(p2.created_at)
-            FROM predictions p2
-            WHERE p2.prediction_date = p1.prediction_date
-        )
-    ''')
-
-    total_result = cursor.fetchone()
-    conn.close()
-
-    # Get R² score from recent performance (more realistic than training CV score)
-    r2_score = 0.0
-    try:
-        # Calculate R² based on recent predictions vs actual prices
-        conn = sqlite3.connect(DB_PATH)
+    date_func_30 = get_date_function(-30)
+    
+    with get_db_connection() as conn:
         cursor = conn.cursor()
 
-        # Get recent predictions with actual prices for R² calculation
-        cursor.execute('''
-            SELECT predicted_price, actual_price
+        # Get accuracy for unique predictions with actual prices (matching chart display)
+        cursor.execute(f'''
+            SELECT AVG(accuracy_percentage), COUNT(DISTINCT prediction_date)
             FROM predictions p1
-            WHERE actual_price IS NOT NULL
-            AND prediction_date >= date('now', '-30 days')
+            WHERE accuracy_percentage IS NOT NULL
+            AND prediction_date >= {date_func_30}
             AND prediction_date != '2025-10-13'
             AND p1.created_at = (
                 SELECT MAX(p2.created_at)
                 FROM predictions p2
                 WHERE p2.prediction_date = p1.prediction_date
             )
-            ORDER BY prediction_date DESC
-            LIMIT 10
         ''')
 
-        recent_data = cursor.fetchall()
-        conn.close()
+        accuracy_result = cursor.fetchone()
+
+        # Get total unique prediction dates (matching chart display)
+        cursor.execute(f'''
+            SELECT COUNT(DISTINCT prediction_date)
+            FROM predictions p1
+            WHERE prediction_date >= {date_func_30}
+            AND prediction_date != '2025-10-13'
+            AND p1.created_at = (
+                SELECT MAX(p2.created_at)
+                FROM predictions p2
+                WHERE p2.prediction_date = p1.prediction_date
+            )
+        ''')
+
+        total_result = cursor.fetchone()
+
+    # Get R² score from recent performance (more realistic than training CV score)
+    r2_score = 0.0
+    try:
+        # Calculate R² based on recent predictions vs actual prices
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get recent predictions with actual prices for R² calculation
+            cursor.execute(f'''
+                SELECT predicted_price, actual_price
+                FROM predictions p1
+                WHERE actual_price IS NOT NULL
+                AND prediction_date >= {date_func_30}
+                AND prediction_date != '2025-10-13'
+                AND p1.created_at = (
+                    SELECT MAX(p2.created_at)
+                    FROM predictions p2
+                    WHERE p2.prediction_date = p1.prediction_date
+                )
+                ORDER BY prediction_date DESC
+                LIMIT 10
+            ''')
+
+            recent_data = cursor.fetchall()
 
         if len(recent_data) >= 3:  # Need at least 3 data points for R²
             from sklearn.metrics import r2_score
@@ -663,126 +881,170 @@ def get_accuracy_stats():
 
 def update_actual_prices_realtime():
     """Update actual prices for past predictions using real-time data for continuous accuracy updates"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    date_func_now = get_date_function(0)
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
 
-    # Get predictions that need updating (including recent ones for real-time accuracy)
-    # Only include predictions for dates that have market data available
-    cursor.execute('''
-        SELECT id, prediction_date, predicted_price, actual_price, accuracy_percentage
-        FROM predictions
-        WHERE prediction_date < date('now')
-        AND actual_price IS NULL
-        ORDER BY prediction_date
-    ''')
+        # Get predictions that need updating (including recent ones for real-time accuracy)
+        # Only include predictions for dates that have market data available
+        cursor.execute(f'''
+            SELECT id, prediction_date, predicted_price, actual_price, accuracy_percentage
+            FROM predictions
+            WHERE prediction_date < {date_func_now}
+            AND actual_price IS NULL
+            ORDER BY prediction_date
+        ''')
 
-    predictions = cursor.fetchall()
+        predictions = cursor.fetchall()
 
-    # Get real-time market data
-    try:
-        # Try multiple symbols for better reliability - Prioritize actual gold price (GC=F)
-        symbols_to_try = ["GC=F", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
-        hist = None
+        # Get real-time market data
+        try:
+            # Try multiple symbols for better reliability - Prioritize actual gold price (GC=F)
+            symbols_to_try = ["GC=F", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+            hist = None
 
-        for symbol in symbols_to_try:
-            try:
-                gold = create_yf_ticker(symbol)
-                # Get recent data with higher frequency for real-time updates
-                # 2 days with 1-minute intervals
-                hist = gold.history(period="2d", interval="1m")
-                if not hist.empty:
-                    break
-            except Exception as e:
-                if symbol == symbols_to_try[-1]:  # Last attempt
-                    logger.error(f"All symbols failed for real-time data: {e}")
-                continue
-
-        if hist is None or hist.empty:
-            # Fallback to daily data with same symbol selection
             for symbol in symbols_to_try:
                 try:
                     gold = create_yf_ticker(symbol)
-                    hist = gold.history(period="1mo", interval="1d")
+                    # Get recent data with higher frequency for real-time updates
+                    # 2 days with 1-minute intervals
+                    hist = gold.history(period="2d", interval="1m")
                     if not hist.empty:
                         break
                 except Exception as e:
                     if symbol == symbols_to_try[-1]:  # Last attempt
-                        logger.error(f"All symbols failed for daily data: {e}")
+                        logger.error(f"All symbols failed for real-time data: {e}")
                     continue
 
-        # Create a mapping of available dates
-        available_dates = set()
-        for date in hist.index:
-            available_dates.add(date.strftime('%Y-%m-%d'))
-
-        logger.info(
-            f"Available market data dates: {sorted(list(available_dates))[-10:]}")
-        logger.info(
-            f"Latest market data date: {max(available_dates) if available_dates else 'None'}")
-        logger.info(f"Current date: {datetime.now().strftime('%Y-%m-%d')}")
-
-    except Exception as e:
-        logger.error(f"Error fetching market data: {e}")
-        conn.close()
-        return
-
-    updated_count = 0
-    skipped_dates = set()  # Track which dates we've already logged as skipped
-
-    if len(predictions) == 0:
-        logger.debug(
-            "No past predictions need evaluation (all already evaluated)")
-    else:
-        logger.info(f"Found {len(predictions)} predictions to evaluate")
-    for pred_id, pred_date, pred_price, current_actual, current_accuracy in predictions:
-        try:
-            # Process all predictions including October 11th
-
-            # Only try to fetch data if we know the date has market data
-            if pred_date in available_dates:
-                # For today's predictions, use real-time price; for past dates, use historical close
-                if pred_date == datetime.now().strftime('%Y-%m-%d'):
-                    # Use real-time price for today's predictions
-                    actual_price = float(hist['Close'].iloc[-1])
-                    logger.info(
-                        f"Using real-time price for {pred_date}: ${actual_price:.2f}")
-                else:
-                    # Use historical close price for past dates
-                    target_date = datetime.strptime(
-                        pred_date, '%Y-%m-%d').date()
-                    matching_rows = hist[hist.index.date == target_date]
-                    if not matching_rows.empty:
-                        actual_price = float(matching_rows['Close'].iloc[0])
-                    else:
-                        logger.warning(f"Could not find data for {pred_date}")
+            if hist is None or hist.empty:
+                # Fallback to daily data with same symbol selection
+                for symbol in symbols_to_try:
+                    try:
+                        gold = create_yf_ticker(symbol)
+                        # Use a longer period to ensure we capture all needed dates
+                        hist = gold.history(period="2mo", interval="1d")
+                        if not hist.empty:
+                            break
+                    except Exception as e:
+                        if symbol == symbols_to_try[-1]:  # Last attempt
+                            logger.error(f"All symbols failed for daily data: {e}")
                         continue
 
-                # Calculate accuracy
-                error_percentage = abs(
-                    pred_price - actual_price) / actual_price * 100
-                accuracy = max(0, 100 - error_percentage)
+            if hist is None or hist.empty:
+                logger.error("Failed to fetch market data for price updates")
+                return
 
-                # Update prediction with new accuracy
-                cursor.execute('''
-                    UPDATE predictions
-                    SET actual_price = ?, accuracy_percentage = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                ''', (actual_price, accuracy, pred_id))
+            # Create a mapping of available dates
+            available_dates = set()
+            for date in hist.index:
+                available_dates.add(date.strftime('%Y-%m-%d'))
 
-                updated_count += 1
-                logger.info(
-                    f"Updated {pred_date}: Predicted {pred_price:.2f}, Actual {actual_price:.2f}, Accuracy {accuracy:.2f}%")
-            else:
-                # Silently skip dates without market data - no logging needed
-                pass
+            logger.debug(
+                f"Available market data dates: {sorted(list(available_dates))[-15:]}")
+            logger.debug(
+                f"Latest market data date: {max(available_dates) if available_dates else 'None'}")
+            logger.debug(f"Current date: {datetime.now().strftime('%Y-%m-%d')}")
+
+            # Log which dates need updating
+            dates_needing_update = [pred[1] for pred in predictions]
+            missing_dates = [
+                d for d in dates_needing_update if d not in available_dates]
+            if missing_dates:
+                logger.warning(
+                    f"Market data not available for dates: {missing_dates}")
 
         except Exception as e:
-            logger.error(f"Error updating actual price for {pred_date}: {e}")
+            logger.error(f"Error fetching market data: {e}")
+            return
 
-    conn.commit()
-    conn.close()
-    logger.info(
-        f"Updated {updated_count} predictions with real-time market data")
+        updated_count = 0
+        skipped_dates = set()  # Track which dates we've already logged as skipped
+
+        if len(predictions) == 0:
+            logger.debug(
+                "No past predictions need evaluation (all already evaluated)")
+        else:
+            logger.info(f"Found {len(predictions)} predictions to evaluate")
+        for pred_id, pred_date, pred_price, current_actual, current_accuracy in predictions:
+            try:
+                # Process all predictions including October 11th
+
+                # Only try to fetch data if we know the date has market data
+                if pred_date in available_dates:
+                    # For today's predictions, use real-time price; for past dates, use historical close
+                    if pred_date == datetime.now().strftime('%Y-%m-%d'):
+                        # Use real-time price for today's predictions
+                        actual_price = float(hist['Close'].iloc[-1])
+                        logger.info(
+                            f"Using real-time price for {pred_date}: ${actual_price:.2f}")
+                    else:
+                        # Use historical close price for past dates
+                        target_date = datetime.strptime(
+                            pred_date, '%Y-%m-%d').date()
+                        matching_rows = hist[hist.index.date == target_date]
+                        if not matching_rows.empty:
+                            actual_price = float(matching_rows['Close'].iloc[0])
+                        else:
+                            # Try to find the closest date (within 3 days) if exact match fails
+                            logger.debug(
+                                f"Exact date not found for {pred_date}, searching nearby dates")
+                            target_datetime = datetime.strptime(
+                                pred_date, '%Y-%m-%d')
+                            for days_offset in range(-3, 4):  # Check ±3 days
+                                search_date = (target_datetime +
+                                               timedelta(days=days_offset)).date()
+                                matching_rows = hist[hist.index.date ==
+                                                     search_date]
+                                if not matching_rows.empty:
+                                    actual_price = float(
+                                        matching_rows['Close'].iloc[0])
+                                    logger.debug(
+                                        f"Using data from {search_date} for {pred_date}")
+                                    break
+                            else:
+                                logger.warning(
+                                    f"Could not find data for {pred_date} (searched ±3 days)")
+                                continue
+
+                    # Calculate accuracy
+                    error_percentage = abs(
+                        pred_price - actual_price) / actual_price * 100
+                    accuracy = max(0, 100 - error_percentage)
+
+                    # Update prediction with new accuracy (database-agnostic)
+                    db_type = get_db_type()
+                    if db_type == "postgresql":
+                        cursor.execute('''
+                            UPDATE predictions
+                            SET actual_price = %s, accuracy_percentage = %s, updated_at = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        ''', (actual_price, accuracy, pred_id))
+                    else:
+                        cursor.execute('''
+                            UPDATE predictions
+                            SET actual_price = ?, accuracy_percentage = ?, updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        ''', (actual_price, accuracy, pred_id))
+
+                    updated_count += 1
+                    logger.info(
+                        f"Updated {pred_date}: Predicted {pred_price:.2f}, Actual {actual_price:.2f}, Accuracy {accuracy:.2f}%")
+                else:
+                    # Silently skip dates without market data - no logging needed
+                    pass
+
+            except Exception as e:
+                logger.error(f"Error updating actual price for {pred_date}: {e}")
+
+        conn.commit()
+        # Only log if there were actual updates to avoid spam
+        if updated_count > 0:
+            logger.info(
+                f"Updated {updated_count} predictions with real-time market data")
+        else:
+            logger.debug(
+                f"No predictions needed updating (all already have actual prices)")
 
 
 def update_actual_prices():
@@ -824,7 +1086,8 @@ def update_actual_prices():
         for date in hist.index:
             available_dates.add(date.strftime('%Y-%m-%d'))
 
-        logger.info(
+        # Only log at debug level to avoid spam - dates are already converted to strings
+        logger.debug(
             f"Available market data dates: {sorted(list(available_dates))[-10:]}")
 
     except Exception as e:
@@ -890,108 +1153,280 @@ def update_actual_prices():
 
 def prediction_exists_for_date(prediction_date):
     """Check if a prediction already exists for the given date"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    db_type = get_db_type()
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        if db_type == "postgresql":
+            cursor.execute('''
+                SELECT COUNT(*) FROM predictions 
+                WHERE prediction_date = %s
+            ''', (prediction_date,))
+        else:
+            cursor.execute('''
+                SELECT COUNT(*) FROM predictions 
+                WHERE prediction_date = ?
+            ''', (prediction_date,))
 
-    cursor.execute('''
-        SELECT COUNT(*) FROM predictions 
-        WHERE prediction_date = ?
-    ''', (prediction_date,))
-
-    count = cursor.fetchone()[0]
-    conn.close()
+        count = cursor.fetchone()[0]
 
     return count > 0
 
 
 def get_prediction_for_date(prediction_date):
     """Get the most recent prediction for the given date"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    db_type = get_db_type()
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        if db_type == "postgresql":
+            cursor.execute('''
+                SELECT predicted_price FROM predictions 
+                WHERE prediction_date = %s
+                ORDER BY created_at DESC 
+                LIMIT 1
+            ''', (prediction_date,))
+        else:
+            cursor.execute('''
+                SELECT predicted_price FROM predictions 
+                WHERE prediction_date = ?
+                ORDER BY created_at DESC 
+                LIMIT 1
+            ''', (prediction_date,))
 
-    cursor.execute('''
-        SELECT predicted_price FROM predictions 
-        WHERE prediction_date = ? 
-        ORDER BY created_at DESC 
-        LIMIT 1
-    ''', (prediction_date,))
-
-    result = cursor.fetchone()
-    conn.close()
+        result = cursor.fetchone()
 
     return result[0] if result else None
 
 
+def predict_historical_date_ml(target_date_str):
+    """Make ML prediction for a specific historical date using only data available up to that date
+    
+    Uses News-Enhanced Lasso (primary) or Lasso Regression (fallback) - ML methods only
+    
+    Args:
+        target_date_str: Date string in 'YYYY-MM-DD' format
+        
+    Returns:
+        Tuple of (predicted_price: float, method: str) or (None, None) if prediction fails
+    """
+    try:
+        target_date = datetime.strptime(target_date_str, '%Y-%m-%d').date()
+        
+        # Fetch market data up to the target date (use period that includes target date)
+        # We need data BEFORE the target date to make a prediction FOR the target date
+        market_data = lasso_predictor.fetch_market_data(symbol='GC=F', period='2y')
+        if not market_data or market_data['gold'].empty:
+            logger.warning(f"No market data available for historical prediction on {target_date_str}")
+            return None, None
+        
+        # Filter market data to only include dates before the target date
+        gold_data = market_data['gold']
+        gold_data_filtered = gold_data[gold_data.index.date < target_date]
+        
+        if gold_data_filtered.empty:
+            logger.warning(f"No historical market data before {target_date_str} for prediction")
+            return None, None
+        
+        # Filter all market data components to dates before target
+        filtered_market_data = {}
+        for key, df in market_data.items():
+            if df is not None and not df.empty:
+                filtered_df = df[df.index.date < target_date]
+                if not filtered_df.empty:
+                    filtered_market_data[key] = filtered_df
+        
+        if 'gold' not in filtered_market_data:
+            logger.warning(f"Cannot create prediction for {target_date_str}: no gold data")
+            return None, None
+        
+        # Try News-Enhanced Lasso first (if model available)
+        if news_enhanced_predictor.model is not None:
+            try:
+                # For historical dates, we can't fetch historical news easily
+                # So we'll skip news sentiment and use only technical features
+                # Create enhanced features without news sentiment
+                enhanced_features = news_enhanced_predictor.create_enhanced_features(
+                    filtered_market_data, sentiment_df=None)
+                
+                if not enhanced_features.empty:
+                    predicted_price = news_enhanced_predictor.predict_with_news(enhanced_features)
+                    method = "News-Enhanced Lasso (Historical)"
+                    logger.info(f"News-Enhanced Lasso historical prediction for {target_date_str}: ${predicted_price:.2f}")
+                    return round(predicted_price, 2), method
+            except Exception as e:
+                logger.debug(f"News-Enhanced model failed for {target_date_str}: {e}, using Lasso Regression")
+        
+        # Fallback to Lasso Regression (primary method for historical predictions)
+        if lasso_predictor.model is not None:
+            # Create features from filtered market data
+            features_df = lasso_predictor.create_fundamental_features(filtered_market_data)
+            
+            if not features_df.empty:
+                predicted_price = lasso_predictor.predict_next_price(features_df)
+                method = "Lasso Regression"
+                logger.info(f"Lasso Regression historical prediction for {target_date_str}: ${predicted_price:.2f}")
+                return round(predicted_price, 2), method
+        
+        logger.warning(f"No ML model available for historical prediction on {target_date_str}")
+        return None, None
+        
+    except Exception as e:
+        logger.error(f"Error making historical ML prediction for {target_date_str}: {e}")
+        return None, None
+
+
+def backfill_missing_predictions(days=90):
+    """Backfill missing predictions for past dates using ML models only
+    
+    Uses News-Enhanced Lasso (primary) or Lasso Regression (fallback) - NO simple methods
+    
+    Args:
+        days: Number of days to check for missing predictions (default: 90)
+    """
+    try:
+        # Get market data to see what dates are available (fetch enough for the range)
+        period = f"{max(days, 90)}d" if isinstance(days, int) else "3mo"
+        hist, symbol_used = get_cached_market_data(period=period)
+        if hist is None or hist.empty:
+            logger.warning(
+                "Cannot backfill predictions: no market data available")
+            return
+
+        # Get all available market dates
+        market_dates = set()
+        for date in hist.index:
+            market_dates.add(date.strftime('%Y-%m-%d'))
+
+        # Get existing predictions
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            date_func = get_date_function(-days)
+            cursor.execute(f'''
+                SELECT DISTINCT prediction_date 
+                FROM predictions 
+                WHERE prediction_date >= {date_func}
+            ''')
+            existing_dates = set(row[0] for row in cursor.fetchall())
+
+        # Find missing dates (dates with market data but no prediction)
+        missing_dates = []
+        today = datetime.now().date()
+        for date_str in sorted(market_dates):
+            if date_str not in existing_dates:
+                # Check if it's a past date or today (not future)
+                try:
+                    date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    if date_obj <= today:  # Backfill past dates and today
+                        missing_dates.append(date_str)
+                except:
+                    continue
+
+        if not missing_dates:
+            logger.debug("No missing predictions to backfill")
+            return
+
+        logger.info(f"Backfilling {len(missing_dates)} missing predictions using ML models only")
+
+        # For each missing date, create a prediction using ML models
+        backfilled_count = 0
+        # Limit to avoid rate limiting but allow more historical data
+        for missing_date in missing_dates[:50]:
+            try:
+                # Use ML prediction for historical date (returns price and method)
+                predicted_price, prediction_method = predict_historical_date_ml(missing_date)
+                
+                if predicted_price and prediction_method:
+                    # Save the prediction with the specific ML method used
+                    success = save_prediction(
+                        missing_date, predicted_price, prediction_method=prediction_method)
+                    if success:
+                        backfilled_count += 1
+                        logger.info(
+                            f"Backfilled ML prediction for {missing_date}: ${predicted_price:.2f} using {prediction_method}")
+                else:
+                    logger.warning(
+                        f"Could not generate ML prediction for {missing_date}")
+            except Exception as e:
+                logger.warning(
+                    f"Failed to backfill ML prediction for {missing_date}: {e}")
+                continue
+
+        if backfilled_count > 0:
+            logger.info(
+                f"Successfully backfilled {backfilled_count} predictions using ML models")
+    except Exception as e:
+        logger.error(
+            f"Error backfilling missing predictions: {e}", exc_info=True)
+
+
 def update_same_day_predictions():
     """Update predictions for today's date when market data becomes available"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
 
-    today = datetime.now().strftime('%Y-%m-%d')
+        today = datetime.now().strftime('%Y-%m-%d')
 
-    # Get today's predictions that don't have actual prices yet
-    cursor.execute('''
-        SELECT id, prediction_date, predicted_price, actual_price, accuracy_percentage
-        FROM predictions
-        WHERE prediction_date = ?
-        AND actual_price IS NULL
-        ORDER BY created_at DESC
-    ''', (today,))
+        # Get today's predictions that don't have actual prices yet
+        cursor.execute('''
+            SELECT id, prediction_date, predicted_price, actual_price, accuracy_percentage
+            FROM predictions
+            WHERE prediction_date = ?
+            AND actual_price IS NULL
+            ORDER BY created_at DESC
+        ''', (today,))
 
-    predictions = cursor.fetchall()
+        predictions = cursor.fetchall()
 
-    if not predictions:
-        logger.info(f"No same-day predictions found for {today}")
-        conn.close()
-        return
-
-    # Get today's market data
-    try:
-        gold = create_yf_ticker("GC=F")
-        hist = gold.history(period="1d", interval="1d")
-
-        if hist.empty:
-            logger.info(f"No market data available for {today} yet")
-            conn.close()
+        if not predictions:
+            logger.info(f"No same-day predictions found for {today}")
             return
 
-        # Check if we have data for today
-        today_data = hist[hist.index.date == datetime.now().date()]
-        if today_data.empty:
+        # Get today's market data
+        try:
+            gold = create_yf_ticker("GC=F")
+            hist = gold.history(period="1d", interval="1d")
+
+            if hist.empty:
+                logger.info(f"No market data available for {today} yet")
+                return
+
+            # Check if we have data for today
+            today_data = hist[hist.index.date == datetime.now().date()]
+            if today_data.empty:
+                logger.info(
+                    f"Market data for {today} not yet available (market may not have closed)")
+                return
+
+            actual_price = float(today_data['Close'].iloc[0])
+            logger.info(f"Found market data for {today}: ${actual_price:.2f}")
+
+            updated_count = 0
+            for pred_id, pred_date, pred_price, current_actual, current_accuracy in predictions:
+                # Calculate accuracy
+                error_percentage = abs(
+                    pred_price - actual_price) / actual_price * 100
+                accuracy = max(0, 100 - error_percentage)
+
+                # Update prediction with new accuracy
+                cursor.execute('''
+                    UPDATE predictions
+                    SET actual_price = ?, accuracy_percentage = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (actual_price, accuracy, pred_id))
+
+                updated_count += 1
+                logger.info(
+                    f"Updated {pred_date}: Predicted {pred_price:.2f}, Actual {actual_price:.2f}, Accuracy {accuracy:.2f}%")
+
+            conn.commit()
             logger.info(
-                f"Market data for {today} not yet available (market may not have closed)")
-            conn.close()
-            return
+                f"Updated {updated_count} same-day predictions for {today}")
 
-        actual_price = float(today_data['Close'].iloc[0])
-        logger.info(f"Found market data for {today}: ${actual_price:.2f}")
-
-        updated_count = 0
-        for pred_id, pred_date, pred_price, current_actual, current_accuracy in predictions:
-            # Calculate accuracy
-            error_percentage = abs(
-                pred_price - actual_price) / actual_price * 100
-            accuracy = max(0, 100 - error_percentage)
-
-            # Update prediction with new accuracy
-            cursor.execute('''
-                UPDATE predictions
-                SET actual_price = ?, accuracy_percentage = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            ''', (actual_price, accuracy, pred_id))
-
-            updated_count += 1
-            logger.info(
-                f"Updated {pred_date}: Predicted {pred_price:.2f}, Actual {actual_price:.2f}, Accuracy {accuracy:.2f}%")
-
-        conn.commit()
-        logger.info(
-            f"Updated {updated_count} same-day predictions for {today}")
-
-    except Exception as e:
-        logger.error(f"Error updating same-day predictions: {e}")
-    finally:
-        conn.close()
+        except Exception as e:
+            logger.error(f"Error updating same-day predictions: {e}")
 
 
 def cleanup_invalid_predictions():
@@ -1051,6 +1486,14 @@ def cleanup_invalid_predictions():
     finally:
         conn.close()
 
+
+# Initialize PostgreSQL pool if enabled (MUST be before init_database)
+if USE_POSTGRESQL:
+    if init_postgresql_pool():
+        logger.info("✅ PostgreSQL enabled - using PostgreSQL database")
+    else:
+        logger.warning("⚠️  PostgreSQL initialization failed - falling back to SQLite")
+        USE_POSTGRESQL = False  # Disable PostgreSQL if pool init failed
 
 # Initialize databases on startup
 init_database()
@@ -1162,6 +1605,7 @@ async def debug_db():
             "db_path": DB_PATH,
             "timestamp": datetime.now().isoformat()
         }
+
 
 @app.get("/backup/status")
 async def backup_status():
@@ -1282,6 +1726,60 @@ async def clear_cache():
         "message": "All caches cleared successfully",
         "timestamp": datetime.now().isoformat()
     }
+
+
+@app.post("/debug/force-prediction")
+async def force_prediction():
+    """Force create a new prediction for testing (deletes existing if any)"""
+    try:
+        from datetime import timedelta
+        next_day = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        # Delete existing prediction if any
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                'DELETE FROM predictions WHERE prediction_date = ?', (next_day,))
+            conn.commit()
+
+        # Generate new prediction
+        predicted_price = predict_next_day_price_ml()
+
+        if predicted_price:
+            prediction_method = get_ml_model_display_name()
+            success = save_prediction(
+                next_day, predicted_price, prediction_method=prediction_method)
+
+            if success:
+                return {
+                    "status": "success",
+                    "message": f"New prediction created for {next_day}",
+                    "prediction": {
+                        "date": next_day,
+                        "predicted_price": predicted_price,
+                        "method": prediction_method
+                    },
+                    "timestamp": datetime.now().isoformat()
+                }
+            else:
+                return {
+                    "status": "error",
+                    "message": "Failed to save prediction to database",
+                    "timestamp": datetime.now().isoformat()
+                }
+        else:
+            return {
+                "status": "error",
+                "message": "Failed to generate prediction",
+                "timestamp": datetime.now().isoformat()
+            }
+    except Exception as e:
+        logger.error(f"Error forcing prediction: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": f"Error forcing prediction: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @app.get("/debug/xauusd-direct")
@@ -1491,11 +1989,16 @@ def predict_next_day_price_smc(hist_data):
     return predict_next_day_price_ml()
 
 
-def get_xauusd_daily_data():
-    """Fetch XAU/USD daily data using yfinance with continuous predictions"""
+def get_xauusd_daily_data(days=90):
+    """Fetch XAU/USD daily data using yfinance with continuous predictions
+    
+    Args:
+        days: Number of days of historical data to fetch (default: 90)
+    """
     try:
-        # Use cached market data to reduce API calls
-        hist, symbol_used = get_cached_market_data()
+        # Use cached market data to reduce API calls (fetch more days for 90-day range)
+        period = f"{max(days, 90)}d" if isinstance(days, int) else "3mo"
+        hist, symbol_used = get_cached_market_data(period=period)
 
         if hist is None or hist.empty:
             logger.error("All gold data sources failed")
@@ -1521,15 +2024,25 @@ def get_xauusd_daily_data():
             should_make_prediction = not prediction_exists_for_date(next_day)
 
             predicted_price = None
+            prediction_method = None
             if should_make_prediction:
                 # Predict next day price using ML
                 predicted_price = predict_next_day_price_ml()
 
                 # Save prediction to database
                 if predicted_price:
-                    save_prediction(next_day, predicted_price)
-                    logger.info(
-                        f"New ML prediction made for {next_day}: ${predicted_price:.2f}")
+                    prediction_method = get_ml_model_display_name()
+                    success = save_prediction(
+                        next_day, predicted_price, prediction_method=prediction_method)
+                    if success:
+                        logger.info(
+                            f"New ML prediction made for {next_day}: ${predicted_price:.2f} using {prediction_method}")
+                    else:
+                        logger.error(
+                            f"Failed to save prediction for {next_day}: ${predicted_price:.2f}")
+                else:
+                    logger.warning(
+                        f"Prediction generation returned None for {next_day}")
             else:
                 # Get existing prediction for display
                 existing_prediction = get_prediction_for_date(next_day)
@@ -1538,23 +2051,39 @@ def get_xauusd_daily_data():
                     logger.info(
                         f"Using existing prediction for {next_day}: ${predicted_price:.2f}")
 
+            # Backfill missing predictions for past dates (increased to match days parameter)
+            # TEMPORARILY DISABLED - Only keeping Nov 10 prediction
+            # try:
+            #     backfill_missing_predictions(days)
+            # except Exception as e:
+            #     logger.warning(f"Backfill failed: {e}")
+
             # Update actual prices for past predictions with real-time data
             update_actual_prices_realtime()
 
             # Update same-day predictions if market data is available
             update_same_day_predictions()
 
-            # Get historical predictions for ghost line
-            historical_predictions = get_historical_predictions(30)
+            # Get historical predictions for ghost line (increased to 90 days for frontend)
+            all_historical_predictions = get_historical_predictions(days)
+            logger.info(f"Retrieved {len(all_historical_predictions)} total predictions from database")
+            if all_historical_predictions:
+                logger.info(f"Prediction date range: {all_historical_predictions[0]['date']} to {all_historical_predictions[-1]['date']}")
+                before_oct6 = [p for p in all_historical_predictions if p['date'] < '2025-10-06']
+                if before_oct6:
+                    logger.info(f"Found {len(before_oct6)} predictions before Oct 6: {[p['date'] for p in before_oct6]}")
 
             # Get accuracy statistics
             accuracy_stats = get_accuracy_stats()
 
             # Convert to list of daily data points
             daily_data = []
+            data_dates = set()  # Track dates in main data
             for date, row in hist.iterrows():
+                date_str = date.strftime("%Y-%m-%d")
+                data_dates.add(date_str)
                 daily_data.append({
-                    "date": date.strftime("%Y-%m-%d"),
+                    "date": date_str,
                     "open": round(float(row['Open']), 2),
                     "high": round(float(row['High']), 2),
                     "low": round(float(row['Low']), 2),
@@ -1562,22 +2091,143 @@ def get_xauusd_daily_data():
                     "volume": int(row['Volume']) if not pd.isna(row['Volume']) else 0
                 })
 
+            # Filter historical predictions to include:
+            # 1. Dates that exist in main data (for accuracy comparison)
+            # 2. Dates before market data starts (for historical predictions before Oct 6)
+            # 3. Future dates (for showing predicted prices beyond current market data)
+            # 4. Dates between min and max that don't have market data (weekends/holidays)
+            if data_dates:
+                # Get the min and max dates from market data
+                min_data_date = min(data_dates) if data_dates else None
+                max_data_date = max(data_dates) if data_dates else None
+                
+                # Include ALL predictions (don't filter out predictions without market data)
+                # This ensures predictions for weekends/holidays are included
+                historical_predictions = all_historical_predictions.copy()
+                
+                # Sort by date to ensure proper ordering
+                historical_predictions.sort(key=lambda x: x['date'])
+                
+                # Debug logging
+                before_count = len([p for p in historical_predictions if min_data_date and p['date'] < min_data_date])
+                after_count = len([p for p in historical_predictions if max_data_date and p['date'] > max_data_date])
+                matched_count = len([p for p in historical_predictions if p['date'] in data_dates])
+                missing_count = len([p for p in historical_predictions if p['date'] not in data_dates and 
+                                     (not min_data_date or p['date'] >= min_data_date) and 
+                                     (not max_data_date or p['date'] <= max_data_date)])
+                logger.info(f"Predictions: {matched_count} with market data, {before_count} before ({min_data_date}), {after_count} after ({max_data_date}), {missing_count} missing market data (weekends/holidays), total: {len(historical_predictions)}")
+                
+                # CRITICAL FIX: Ensure predictions before Oct 6 are included in data array
+                # Add predictions that are in historical_predictions but not yet in daily_data
+                # This ensures the accuracy line shows predicted prices for dates before Oct 6
+                logger.info(f"Checking for predictions to add to data array. min_data_date={min_data_date}, total predictions={len(all_historical_predictions)}")
+                
+                # Get all dates currently in daily_data
+                existing_data_dates = set(d['date'] for d in daily_data)
+                
+                # Find predictions that should be in data array but aren't yet
+                # These are predictions that don't have corresponding market data (weekends, holidays)
+                # EXCLUDE future dates - they should not appear in the gold price line
+                predictions_to_add = []
+                today = datetime.now().date()
+                # Use ALL predictions, not just filtered ones, to ensure we don't miss any
+                for pred in all_historical_predictions:
+                    pred_date = pred['date']
+                    try:
+                        pred_date_obj = datetime.strptime(pred_date, '%Y-%m-%d').date()
+                        # Only add predictions for past dates or today (not future dates)
+                        # Future dates should only appear in the prediction line, not the gold price line
+                        if pred_date not in existing_data_dates and pred_date_obj <= today:
+                            predictions_to_add.append(pred)
+                    except:
+                        # Skip invalid dates
+                        continue
+                
+                if predictions_to_add:
+                    logger.info(f"✅ Adding {len(predictions_to_add)} predictions to data array for chart display")
+                    logger.info(f"Predictions to add: {[p['date'] for p in predictions_to_add[:10]]}")
+                    
+                    # Add predictions to daily_data
+                    for pred in predictions_to_add:
+                        pred_date = pred['date']
+                        # Check if this date has market data (shouldn't if we're adding it here)
+                        if pred_date not in existing_data_dates:
+                            daily_data.append({
+                                "date": pred_date,
+                                "open": None,  # No market data available
+                                "high": None,
+                                "low": None,
+                                "close": None,  # No actual price available
+                                "volume": 0,
+                                "predicted_price": pred.get('predicted_price'),
+                                "actual_price": pred.get('actual_price')
+                            })
+                    
+                    # Re-sort daily_data by date to ensure proper chronological ordering
+                    daily_data.sort(key=lambda x: x['date'])
+                    logger.info(f"✅ Updated daily_data to include {len(daily_data)} total points (added {len(predictions_to_add)} predictions)")
+                else:
+                    logger.info(f"All predictions already in data array. Total data points: {len(daily_data)}")
+            else:
+                # If no data dates, return all predictions (shouldn't happen)
+                historical_predictions = all_historical_predictions
+                historical_predictions.sort(key=lambda x: x['date'])
+            
+            # Debug logging if filtering removed all predictions
+            if len(all_historical_predictions) > 0 and len(historical_predictions) == 0:
+                logger.warning(f"Filtered {len(all_historical_predictions)} predictions to 0. Sample data dates: {sorted(list(data_dates))[:3]}, Sample pred dates: {sorted([p['date'] for p in all_historical_predictions])[:3]}")
+
             # Always include current price
             current_price = round(float(hist['Close'].iloc[-1]), 2)
 
-            return {
-                "symbol": "XAUUSD",
-                "timeframe": "daily",
-                "data": daily_data,
-                "historical_predictions": historical_predictions,
-                "accuracy_stats": accuracy_stats,
-                "current_price": current_price,
-                "prediction": {
+            # Merge predictions into data array for easier frontend consumption
+            # Use ALL historical predictions (not just filtered ones) to ensure we don't miss any
+            all_predictions_by_date = {p['date']: p for p in all_historical_predictions}
+            
+            # Add predicted_price and actual_price to data points where they exist
+            enhanced_data = []
+            matched_count = 0
+            for data_point in daily_data:
+                date = data_point['date']
+                enhanced_point = {**data_point}
+                
+                # Check if this date has a prediction (use all predictions, not just filtered)
+                if date in all_predictions_by_date:
+                    pred = all_predictions_by_date[date]
+                    # Only set if not already set (preserve existing values)
+                    if 'predicted_price' not in enhanced_point or enhanced_point.get('predicted_price') is None:
+                        enhanced_point['predicted_price'] = pred.get('predicted_price')
+                    if 'actual_price' not in enhanced_point or enhanced_point.get('actual_price') is None:
+                        enhanced_point['actual_price'] = pred.get('actual_price')
+                    matched_count += 1
+                # If predicted_price is already set (from earlier addition), keep it
+                elif enhanced_point.get('predicted_price') is not None:
+                    matched_count += 1  # Count as matched since it already has prediction
+                
+                enhanced_data.append(enhanced_point)
+            
+            logger.info(f"Merged {matched_count} predictions into {len(enhanced_data)} data points (using all {len(all_historical_predictions)} predictions)")
+            
+            # Build prediction object - ensure it's clear this is for FUTURE date only
+            # IMPORTANT: Frontend should use prediction.next_day for the date, NOT the last data point date
+            prediction_obj = None
+            if predicted_price:
+                prediction_obj = {
                     "next_day": next_day,
                     "predicted_price": predicted_price,
                     "current_price": current_price,
-                    "prediction_method": get_ml_model_display_name()
-                } if predicted_price else None,
+                    "prediction_method": get_ml_model_display_name(),
+                    "warning": "This prediction is for a FUTURE date. Use 'next_day' as the date, NOT the last date in data array."
+                }
+            
+            return {
+                "symbol": "XAUUSD",
+                "timeframe": "daily",
+                "data": enhanced_data,  # Data with predictions merged in - use predicted_price field only
+                "historical_predictions": historical_predictions,  # Keep separate array for backward compatibility
+                "accuracy_stats": accuracy_stats,
+                "current_price": current_price,
+                "prediction": prediction_obj,  # Future prediction only - use next_day date, not last data date
                 "timestamp": datetime.now().isoformat(),
                 "status": "success"
             }
@@ -1795,9 +2445,13 @@ async def compare_models():
 
 
 @app.get("/xauusd")
-async def get_daily_data():
-    """REST endpoint to get XAU/USD daily data"""
-    return get_xauusd_daily_data()
+async def get_daily_data(days: int = 90):
+    """REST endpoint to get XAU/USD daily data
+    
+    Args:
+        days: Number of days of historical data to return (default: 90)
+    """
+    return get_xauusd_daily_data(days=days)
 
 
 @app.get("/xauusd/realtime")
