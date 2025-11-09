@@ -18,3 +18,5 @@ services:
         value: 2
       - key: REALTIME_CACHE_DURATION
         value: 60
+      - key: USE_POSTGRESQL
+        value: "true"

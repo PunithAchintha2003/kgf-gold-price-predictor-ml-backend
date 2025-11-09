@@ -1,0 +1,13 @@
+# GitGuardian configuration
+# Ignore false positives for environment variable examples
+
+paths-ignore:
+  - "migrate_to_postgresql.py"
+
+# Or use matches-ignore for specific patterns
+matches-ignore:
+  - name: Generic Password
+    match: POSTGRESQL_PASSWORD.*=.*os\.getenv
+  - name: Generic Password  
+    match: password.*=.*POSTGRESQL_PASSWORD
+
