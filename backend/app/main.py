@@ -573,8 +573,13 @@ def init_backup_database():
 
 
 def backup_predictions():
-    """Backup all predictions to backup database"""
+    """Backup all predictions to backup database (SQLite only)"""
     try:
+        # Skip backup when using PostgreSQL (PostgreSQL has its own backup mechanisms)
+        if get_db_type() == "postgresql":
+            logger.debug("Using PostgreSQL - skipping SQLite backup")
+            return True
+        
         # Connect to both databases
         main_conn = sqlite3.connect(DB_PATH)
         backup_conn = sqlite3.connect(BACKUP_DB_PATH)
@@ -730,12 +735,13 @@ def save_prediction(prediction_date, predicted_price, actual_price=None, predict
             logger.info(
                 f"Successfully saved prediction for {prediction_date}: ${predicted_price:.2f} using {prediction_method}")
 
-        # Automatically backup after saving
+        # Automatically backup after saving (SQLite only)
         try:
-            backup_predictions()
+            if get_db_type() != "postgresql":
+                backup_predictions()
         except Exception as backup_error:
-            logger.warning(
-                f"Prediction saved but backup failed: {backup_error}")
+            logger.debug(
+                f"Backup skipped or failed: {backup_error}")
 
         return True
     except Exception as e:
