@@ -15,6 +15,12 @@ import os
 import time
 from contextlib import contextmanager
 
+# Fix SSL certificate issue for Python 3.13
+import certifi
+os.environ['SSL_CERT_FILE'] = certifi.where()
+os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
+os.environ['CURL_CA_BUNDLE'] = certifi.where()
+
 # PostgreSQL support
 try:
     import psycopg2
@@ -486,6 +492,7 @@ def init_database():
                     predicted_price REAL NOT NULL,
                     actual_price REAL,
                     accuracy_percentage REAL,
+                    prediction_method TEXT DEFAULT 'Lasso Regression',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
@@ -2439,6 +2446,239 @@ async def get_enhanced_prediction():
         }
 
 
+@app.post("/xauusd/predict-next-day")
+async def trigger_daily_prediction():
+    """Manually trigger daily prediction for next trading day"""
+    try:
+        result = make_daily_prediction_enhanced()
+        
+        if result['success']:
+            return {
+                "status": "success",
+                "prediction_date": result['prediction_date'],
+                "predicted_price": round(result['predicted_price'], 2),
+                "current_price": round(result['current_price'], 2),
+                "method": result['method'],
+                "message": f"Prediction for {result['prediction_date']} saved successfully",
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "status": "error",
+                "message": result.get('error', 'Unknown error'),
+                "timestamp": datetime.now().isoformat()
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@app.post("/xauusd/retrain-model")
+async def trigger_model_retraining():
+    """Manually trigger News-Enhanced model retraining"""
+    try:
+        result = retrain_enhanced_model()
+        
+        if result['success']:
+            return {
+                "status": "success",
+                "r2_score": round(result['r2_score'], 4),
+                "selected_features": result['selected_features'],
+                "message": "Model retrained successfully",
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "status": "error",
+                "message": result.get('error', 'Unknown error'),
+                "timestamp": datetime.now().isoformat()
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@app.get("/xauusd/accuracy-visualization")
+async def get_accuracy_visualization():
+    """Get data for drawing accuracy line (predicted vs actual prices)"""
+    try:
+        db_type = get_db_type()
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get predictions with actual prices for the last 90 days
+            if db_type == "postgresql":
+                cursor.execute('''
+                    SELECT 
+                        prediction_date,
+                        predicted_price,
+                        actual_price,
+                        accuracy_percentage,
+                        prediction_method,
+                        created_at
+                    FROM predictions
+                    WHERE actual_price IS NOT NULL
+                    AND prediction_date >= CURRENT_DATE - INTERVAL '90 days'
+                    ORDER BY prediction_date ASC
+                ''')
+            else:
+                cursor.execute('''
+                    SELECT 
+                        prediction_date,
+                        predicted_price,
+                        actual_price,
+                        accuracy_percentage,
+                        prediction_method,
+                        created_at
+                    FROM predictions
+                    WHERE actual_price IS NOT NULL
+                    AND prediction_date >= date('now', '-90 days')
+                    ORDER BY prediction_date ASC
+                ''')
+            
+            rows = cursor.fetchall()
+        
+        # Format data for visualization
+        accuracy_data = []
+        for row in rows:
+            pred_date = row[0] if db_type == "postgresql" else row[0]
+            pred_price = float(row[1])
+            actual_price = float(row[2])
+            accuracy = float(row[3]) if row[3] else 0
+            method = row[4] if len(row) > 4 else "Unknown"
+            
+            # Calculate error metrics
+            error_abs = abs(pred_price - actual_price)
+            error_pct = (error_abs / actual_price * 100) if actual_price > 0 else 0
+            
+            accuracy_data.append({
+                "date": str(pred_date),
+                "predicted_price": round(pred_price, 2),
+                "actual_price": round(actual_price, 2),
+                "accuracy_percentage": round(accuracy, 2),
+                "error_absolute": round(error_abs, 2),
+                "error_percentage": round(error_pct, 2),
+                "method": method
+            })
+        
+        # Calculate overall statistics
+        if accuracy_data:
+            accuracies = [d['accuracy_percentage'] for d in accuracy_data]
+            errors = [d['error_percentage'] for d in accuracy_data]
+            
+            stats = {
+                "average_accuracy": round(sum(accuracies) / len(accuracies), 2),
+                "min_accuracy": round(min(accuracies), 2),
+                "max_accuracy": round(max(accuracies), 2),
+                "average_error": round(sum(errors) / len(errors), 2),
+                "total_predictions": len(accuracy_data)
+            }
+        else:
+            stats = {
+                "average_accuracy": 0,
+                "min_accuracy": 0,
+                "max_accuracy": 0,
+                "average_error": 0,
+                "total_predictions": 0
+            }
+        
+        return {
+            "status": "success",
+            "data": accuracy_data,
+            "statistics": stats,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting accuracy visualization data: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@app.get("/xauusd/prediction-history")
+async def get_prediction_history(days: int = 30):
+    """Get prediction history including pending predictions"""
+    try:
+        db_type = get_db_type()
+        
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get all predictions for the specified period
+            if db_type == "postgresql":
+                cursor.execute('''
+                    SELECT 
+                        prediction_date,
+                        predicted_price,
+                        actual_price,
+                        accuracy_percentage,
+                        prediction_method,
+                        created_at
+                    FROM predictions
+                    WHERE prediction_date >= CURRENT_DATE - INTERVAL '%s days'
+                    ORDER BY prediction_date DESC
+                ''', (days,))
+            else:
+                cursor.execute('''
+                    SELECT 
+                        prediction_date,
+                        predicted_price,
+                        actual_price,
+                        accuracy_percentage,
+                        prediction_method,
+                        created_at
+                    FROM predictions
+                    WHERE prediction_date >= date('now', ?)
+                    ORDER BY prediction_date DESC
+                ''', (f'-{days} days',))
+            
+            rows = cursor.fetchall()
+        
+        predictions = []
+        for row in rows:
+            pred_date = row[0] if db_type == "postgresql" else row[0]
+            pred_price = float(row[1])
+            actual_price = float(row[2]) if row[2] else None
+            accuracy = float(row[3]) if row[3] else None
+            method = row[4] if len(row) > 4 else "Unknown"
+            
+            status = "completed" if actual_price else "pending"
+            
+            predictions.append({
+                "date": str(pred_date),
+                "predicted_price": round(pred_price, 2),
+                "actual_price": round(actual_price, 2) if actual_price else None,
+                "accuracy_percentage": round(accuracy, 2) if accuracy else None,
+                "status": status,
+                "method": method
+            })
+        
+        return {
+            "status": "success",
+            "predictions": predictions,
+            "total": len(predictions),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting prediction history: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 @app.get("/xauusd/compare-models")
 async def compare_models():
     """Compare predictions from different models including news-enhanced"""
@@ -2697,11 +2937,305 @@ async def continuous_accuracy_updates():
         await asyncio.sleep(900)  # 15 minutes
 
 
+def make_daily_prediction_enhanced():
+    """
+    Make daily prediction using News-Enhanced Lasso model
+    Returns predicted price for the next trading day
+    """
+    try:
+        logger.info("=" * 60)
+        logger.info("Making daily prediction with News-Enhanced Lasso model")
+        logger.info("=" * 60)
+        
+        # Determine prediction date (next trading day)
+        from datetime import datetime, timedelta
+        today = datetime.now()
+        
+        # If it's Friday, predict for Monday (skip weekend)
+        if today.weekday() == 4:  # Friday
+            prediction_date = (today + timedelta(days=3)).strftime('%Y-%m-%d')
+        # If it's Saturday, predict for Monday
+        elif today.weekday() == 5:  # Saturday
+            prediction_date = (today + timedelta(days=2)).strftime('%Y-%m-%d')
+        # If it's Sunday, predict for Monday
+        elif today.weekday() == 6:  # Sunday
+            prediction_date = (today + timedelta(days=1)).strftime('%Y-%m-%d')
+        else:
+            # Weekday - predict for next day
+            prediction_date = (today + timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        logger.info(f"Prediction date: {prediction_date}")
+        
+        # Try News-Enhanced model first
+        if news_enhanced_predictor.model is not None:
+            try:
+                logger.info("Using News-Enhanced Lasso model for prediction...")
+                
+                # Get fresh market data
+                market_data = lasso_predictor.fetch_market_data()
+                if not market_data:
+                    raise ValueError("Failed to fetch market data")
+                
+                # Fetch news sentiment
+                sentiment_features = news_enhanced_predictor.fetch_and_analyze_news(days_back=7)
+                
+                # Create enhanced features
+                enhanced_features = news_enhanced_predictor.create_enhanced_features(
+                    market_data, sentiment_features)
+                
+                if enhanced_features.empty:
+                    raise ValueError("No enhanced features created")
+                
+                # Make prediction
+                predicted_price = news_enhanced_predictor.predict_with_news(enhanced_features)
+                current_price = enhanced_features['gold_close'].iloc[-1]
+                
+                prediction_method = "News-Enhanced Lasso"
+                
+                logger.info(f"✅ Prediction successful!")
+                logger.info(f"Current price: ${current_price:.2f}")
+                logger.info(f"Predicted price for {prediction_date}: ${predicted_price:.2f}")
+                logger.info(f"Expected change: ${predicted_price - current_price:.2f}")
+                
+                # Save prediction to database
+                save_prediction(
+                    prediction_date=prediction_date,
+                    predicted_price=predicted_price,
+                    prediction_method=prediction_method
+                )
+                
+                logger.info(f"💾 Prediction saved to database")
+                logger.info("=" * 60)
+                
+                return {
+                    'success': True,
+                    'prediction_date': prediction_date,
+                    'predicted_price': predicted_price,
+                    'current_price': current_price,
+                    'method': prediction_method
+                }
+                
+            except Exception as e:
+                logger.warning(f"News-Enhanced model failed: {e}, falling back to Lasso")
+        
+        # Fallback to regular Lasso model
+        logger.info("Using Lasso Regression model for prediction...")
+        market_data = lasso_predictor.fetch_market_data()
+        if not market_data:
+            raise ValueError("Failed to fetch market data")
+        
+        features_df = lasso_predictor.create_fundamental_features(market_data)
+        predicted_price = lasso_predictor.predict_next_price(features_df)
+        current_price = features_df['gold_close'].iloc[-1]
+        
+        prediction_method = "Lasso Regression"
+        
+        logger.info(f"✅ Prediction successful!")
+        logger.info(f"Current price: ${current_price:.2f}")
+        logger.info(f"Predicted price for {prediction_date}: ${predicted_price:.2f}")
+        
+        # Save prediction
+        save_prediction(
+            prediction_date=prediction_date,
+            predicted_price=predicted_price,
+            prediction_method=prediction_method
+        )
+        
+        logger.info(f"💾 Prediction saved to database")
+        logger.info("=" * 60)
+        
+        return {
+            'success': True,
+            'prediction_date': prediction_date,
+            'predicted_price': predicted_price,
+            'current_price': current_price,
+            'method': prediction_method
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error making daily prediction: {e}")
+        logger.error("=" * 60)
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+def retrain_enhanced_model():
+    """
+    Retrain the News-Enhanced Lasso model with latest data
+    This should be run weekly to keep the model up to date
+    """
+    try:
+        logger.info("=" * 60)
+        logger.info("🔄 Retraining News-Enhanced Lasso model with latest data")
+        logger.info("=" * 60)
+        
+        # Initialize enhanced predictor
+        predictor = NewsEnhancedLassoPredictor()
+        
+        # Fetch market data
+        logger.info("📊 Fetching market data...")
+        market_data = lasso_predictor.fetch_market_data()
+        
+        if market_data is None:
+            raise ValueError("Failed to fetch market data")
+        
+        # Fetch and analyze news
+        logger.info("📰 Fetching and analyzing news...")
+        sentiment_features = predictor.fetch_and_analyze_news(days_back=30)
+        
+        # Create enhanced features
+        logger.info("🔧 Creating enhanced features...")
+        enhanced_features = predictor.create_enhanced_features(
+            market_data, sentiment_features)
+        
+        if enhanced_features.empty:
+            raise ValueError("No enhanced features created")
+        
+        # Train enhanced model
+        logger.info("🎓 Training enhanced model...")
+        training_results = predictor.train_enhanced_model(enhanced_features)
+        
+        if training_results:
+            # Save model
+            predictor.save_enhanced_model()
+            
+            # Update global predictor
+            global news_enhanced_predictor
+            news_enhanced_predictor = predictor
+            
+            logger.info("✅ Model retrained and saved successfully!")
+            logger.info(f"R² Score: {predictor.best_score:.4f}")
+            logger.info(f"Selected features: {len(predictor.selected_features)}")
+            logger.info("=" * 60)
+            
+            return {
+                'success': True,
+                'r2_score': predictor.best_score,
+                'selected_features': len(predictor.selected_features)
+            }
+        else:
+            raise ValueError("Training failed")
+            
+    except Exception as e:
+        logger.error(f"❌ Error retraining model: {e}")
+        logger.error("=" * 60)
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
+async def daily_prediction_scheduler():
+    """
+    Background task to automatically retrain model and make predictions at market close
+    Gold market closes at 5:00 PM ET (17:00)
+    Runs daily at 5:30 PM ET to ensure market has closed
+    
+    Flow:
+    1. Market closes at 5:00 PM
+    2. At 5:30 PM: Retrain model with latest data (including today's close)
+    3. Make prediction for next trading day with fresh model
+    4. Save prediction to database
+    """
+    last_prediction_date = None
+    
+    while True:
+        try:
+            now = datetime.now()
+            
+            # Market close time: 17:30 (5:30 PM) - 30 minutes after market close
+            target_hour = 17
+            target_minute = 30
+            
+            # Check if it's time to retrain and predict
+            if now.hour == target_hour and now.minute >= target_minute and now.minute < target_minute + 5:
+                # Check if we already processed today
+                today_str = now.strftime('%Y-%m-%d')
+                if last_prediction_date != today_str:
+                    logger.info(f"⏰ Market close detected - starting daily workflow")
+                    logger.info("=" * 60)
+                    logger.info("DAILY WORKFLOW: Retrain → Predict → Save")
+                    logger.info("=" * 60)
+                    
+                    # Step 1: Retrain model with latest data
+                    logger.info("📊 Step 1/2: Retraining News-Enhanced model with latest data...")
+                    retrain_result = retrain_enhanced_model()
+                    
+                    if retrain_result['success']:
+                        logger.info(f"✅ Model retrained successfully! R² = {retrain_result['r2_score']:.4f}")
+                    else:
+                        logger.warning(f"⚠️  Model retraining failed: {retrain_result.get('error')}")
+                        logger.info("Continuing with existing model...")
+                    
+                    # Step 2: Make prediction with (possibly newly trained) model
+                    logger.info("🔮 Step 2/2: Making prediction for next trading day...")
+                    prediction_result = make_daily_prediction_enhanced()
+                    
+                    if prediction_result['success']:
+                        last_prediction_date = today_str
+                        logger.info(f"✅ Daily workflow completed successfully!")
+                        logger.info(f"   - Model retrained: {'Yes' if retrain_result['success'] else 'No (using existing)'}")
+                        logger.info(f"   - Prediction date: {prediction_result['prediction_date']}")
+                        logger.info(f"   - Predicted price: ${prediction_result['predicted_price']:.2f}")
+                        logger.info(f"   - Current price: ${prediction_result['current_price']:.2f}")
+                        logger.info("=" * 60)
+                    else:
+                        logger.error(f"❌ Prediction failed: {prediction_result.get('error')}")
+                        logger.info("=" * 60)
+            
+            # Check every 5 minutes
+            await asyncio.sleep(300)
+            
+        except Exception as e:
+            logger.error(f"Error in daily prediction scheduler: {e}")
+            await asyncio.sleep(300)
+
+
+async def weekly_model_retraining():
+    """
+    Background task for additional weekly model retraining (backup/maintenance)
+    Note: Daily retraining happens at market close (5:30 PM)
+    This provides an additional weekly deep retrain on Sunday at 2:00 AM
+    """
+    last_training_date = None
+    
+    while True:
+        try:
+            now = datetime.now()
+            
+            # Sunday at 2:00 AM - Weekly maintenance retrain
+            if now.weekday() == 6 and now.hour == 2 and now.minute < 10:
+                today_str = now.strftime('%Y-%m-%d')
+                
+                if last_training_date != today_str:
+                    logger.info("⏰ Weekly maintenance retraining scheduled")
+                    logger.info("Note: Daily retraining happens at market close")
+                    result = retrain_enhanced_model()
+                    
+                    if result['success']:
+                        last_training_date = today_str
+                        logger.info("✅ Weekly maintenance retraining completed")
+                    else:
+                        logger.error(f"❌ Weekly retraining failed: {result.get('error')}")
+            
+            # Check every 10 minutes
+            await asyncio.sleep(600)
+            
+        except Exception as e:
+            logger.error(f"Error in weekly retraining scheduler: {e}")
+            await asyncio.sleep(600)
+
+
 @app.on_event("startup")
 async def startup_event():
     """Start background tasks for broadcasting daily data and continuous accuracy updates"""
     asyncio.create_task(broadcast_daily_data())
     asyncio.create_task(continuous_accuracy_updates())
+    asyncio.create_task(daily_prediction_scheduler())
+    asyncio.create_task(weekly_model_retraining())
+    logger.info("✅ All background tasks started successfully")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)

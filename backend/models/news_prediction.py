@@ -173,7 +173,18 @@ class NewsSentimentAnalyzer:
     def _fetch_rss_news_data(self, days_back: int) -> List[Dict]:
         """Fetch news from RSS feeds"""
         try:
-            import feedparser
+            try:
+                import feedparser
+            except ImportError as e:
+                logger.warning(f"feedparser not available or has compatibility issues: {e}")
+                return []
+            
+            # Handle Python 3.13+ compatibility issue with feedparser
+            try:
+                import html
+            except ImportError:
+                # Python 3.13+ removed html.parser fallback, feedparser may have issues
+                pass
 
             rss_feeds = RSS_FEEDS
 
@@ -186,19 +197,22 @@ class NewsSentimentAnalyzer:
 
                     for entry in feed.entries:
                         try:
-                            pub_date = datetime(*entry.published_parsed[:6])
-                            if pub_date >= cutoff_date:
-                                # Check if content is gold-related
-                                content = f"{entry.title} {entry.get('summary', '')}"
-                                if self._is_gold_related(content):
-                                    news_items.append({
-                                        'title': entry.title,
-                                        'summary': entry.get('summary', ''),
-                                        'published_at': pub_date.isoformat(),
-                                        'source': 'RSS',
-                                        'url': entry.link
-                                    })
-                        except:
+                            # Handle published_parsed safely
+                            if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                                pub_date = datetime(*entry.published_parsed[:6])
+                                if pub_date >= cutoff_date:
+                                    # Check if content is gold-related
+                                    content = f"{entry.title} {entry.get('summary', '')}"
+                                    if self._is_gold_related(content):
+                                        news_items.append({
+                                            'title': entry.title,
+                                            'summary': entry.get('summary', ''),
+                                            'published_at': pub_date.isoformat(),
+                                            'source': 'RSS',
+                                            'url': entry.link
+                                        })
+                        except Exception as entry_error:
+                            logger.debug(f"Error processing RSS entry: {entry_error}")
                             continue
 
                 except Exception as e:
@@ -209,7 +223,7 @@ class NewsSentimentAnalyzer:
             return news_items
 
         except Exception as e:
-            logger.error(f"Error fetching RSS data: {e}")
+            logger.warning(f"Error fetching RSS data: {e} - continuing without RSS feeds")
             return []
 
     def _is_gold_related(self, text: str) -> bool:
@@ -629,6 +643,14 @@ class NewsEnhancedLassoPredictor:
         """Save the enhanced model"""
         if self.model is None:
             raise ValueError("No model to save")
+
+        # If relative path, save to models directory
+        from pathlib import Path
+        model_path = Path(filepath)
+        if not model_path.is_absolute():
+            # Get the models directory (where this file is located)
+            models_dir = Path(__file__).resolve().parent
+            filepath = str(models_dir / filepath)
 
         model_data = {
             'model': self.model,
