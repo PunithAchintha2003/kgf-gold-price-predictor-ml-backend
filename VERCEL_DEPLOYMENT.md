@@ -5,11 +5,13 @@
 **Your FastAPI backend has these features that Vercel struggles with:**
 
 1. **WebSockets** (`/ws/xauusd` endpoint)
+
    - ⚠️ Vercel has limited WebSocket support
    - Connections may timeout or disconnect
    - Not ideal for real-time streaming
 
 2. **Background Tasks**
+
    - ⚠️ Vercel functions are stateless
    - Background tasks (`broadcast_daily_data`, `continuous_accuracy_updates`) won't run
    - No persistent processes
@@ -38,18 +40,20 @@ Your Supabase database is already configured. Connection details:
 POSTGRESQL_HOST=db.iglvmvbemfizfnxcloil.supabase.co
 POSTGRESQL_DATABASE=postgres
 POSTGRESQL_USER=postgres.iglvmvbemfizfnxcloil
-POSTGRESQL_PASSWORD=4WptuFtYRcwYo4xx
+POSTGRESQL_PASSWORD=<your-supabase-password>
 POSTGRESQL_PORT=5432
 ```
 
 ### Step 2: Deploy to Vercel
 
 1. **Connect Repository:**
+
    - Go to [Vercel Dashboard](https://vercel.com/dashboard)
    - Click "Add New..." → "Project"
    - Import your GitHub repository
 
 2. **Configure Project:**
+
    - **Framework Preset:** Other
    - **Root Directory:** `./` (root)
    - **Build Command:** `pip install -r requirements.txt`
@@ -65,7 +69,7 @@ POSTGRESQL_PORT=5432
    POSTGRESQL_HOST=db.iglvmvbemfizfnxcloil.supabase.co
    POSTGRESQL_DATABASE=postgres
    POSTGRESQL_USER=postgres.iglvmvbemfizfnxcloil
-   POSTGRESQL_PASSWORD=4WptuFtYRcwYo4xx
+   POSTGRESQL_PASSWORD=<your-supabase-password>
    POSTGRESQL_PORT=5432
    ENVIRONMENT=production
    LOG_LEVEL=INFO
@@ -78,6 +82,7 @@ POSTGRESQL_PORT=5432
 ### Step 3: Verify Deployment
 
 1. Check deployment logs for:
+
    - ✅ `"PostgreSQL connection pool initialized"` = Success
    - ⚠️ `"PostgreSQL initialization failed - falling back to SQLite"` = Connection issue
 
@@ -88,11 +93,13 @@ POSTGRESQL_PORT=5432
 ### ⚠️ Known Issues with Vercel
 
 1. **WebSocket Endpoint (`/ws/xauusd`):**
+
    - May not work properly
    - Connections may timeout
    - Consider removing or using alternative
 
 2. **Background Tasks:**
+
    - Won't run automatically
    - Need to use Vercel Cron Jobs or external scheduler
 
@@ -106,19 +113,21 @@ POSTGRESQL_PORT=5432
 **Better option for your FastAPI backend:**
 
 1. **Deploy Backend to Render:**
+
    - Use existing `render.yaml`
    - Supports WebSockets ✅
    - Supports background tasks ✅
    - Long-running processes ✅
 
 2. **Connect to Supabase PostgreSQL:**
+
    - Set environment variables in Render:
      ```bash
      USE_POSTGRESQL=true
      POSTGRESQL_HOST=db.iglvmvbemfizfnxcloil.supabase.co
      POSTGRESQL_DATABASE=postgres
      POSTGRESQL_USER=postgres.iglvmvbemfizfnxcloil
-     POSTGRESQL_PASSWORD=4WptuFtYRcwYo4xx
+     POSTGRESQL_PASSWORD=<your-supabase-password>
      POSTGRESQL_PORT=5432
      ```
 
@@ -132,26 +141,28 @@ POSTGRESQL_PORT=5432
 
 ## 📊 Comparison
 
-| Feature | Vercel + Supabase | Render + Supabase |
-|---------|-------------------|-------------------|
-| WebSockets | ⚠️ Limited | ✅ Full support |
-| Background Tasks | ❌ Won't work | ✅ Works |
-| Long-running | ⚠️ Timeout limits | ✅ No limits |
-| Setup Complexity | ⚠️ Medium | ✅ Easy |
-| Cost | ✅ Free | ✅ Free |
-| PostgreSQL | ✅ Supabase (free) | ✅ Supabase (free) |
+| Feature          | Vercel + Supabase  | Render + Supabase  |
+| ---------------- | ------------------ | ------------------ |
+| WebSockets       | ⚠️ Limited         | ✅ Full support    |
+| Background Tasks | ❌ Won't work      | ✅ Works           |
+| Long-running     | ⚠️ Timeout limits  | ✅ No limits       |
+| Setup Complexity | ⚠️ Medium          | ✅ Easy            |
+| Cost             | ✅ Free            | ✅ Free            |
+| PostgreSQL       | ✅ Supabase (free) | ✅ Supabase (free) |
 
 ---
 
 ## 🎯 Recommendation
 
 **Use Render + Supabase:**
+
 - Better fit for your FastAPI backend
 - All features work properly
 - Free tier available
 - Supabase PostgreSQL (no expiration)
 
 **Vercel + Supabase:**
+
 - Only if you remove WebSockets and background tasks
 - Good for simple REST APIs
 - Not ideal for your current setup
@@ -161,9 +172,8 @@ POSTGRESQL_PORT=5432
 ## 📝 Summary
 
 - **Database:** Supabase PostgreSQL ✅ (already set up)
-- **Backend Deployment:** 
+- **Backend Deployment:**
   - ⚠️ Vercel (has limitations)
   - ✅ Render (recommended)
 
 Your Supabase database is ready! Choose your deployment platform based on your needs.
-

@@ -76,7 +76,8 @@ POSTGRESQL_HOST = os.getenv("POSTGRESQL_HOST", "localhost")
 POSTGRESQL_PORT = os.getenv("POSTGRESQL_PORT", "5432")
 POSTGRESQL_DATABASE = os.getenv("POSTGRESQL_DATABASE", "gold_predictor")
 POSTGRESQL_USER = os.getenv("POSTGRESQL_USER", "postgres")
-POSTGRESQL_PASSWORD = os.getenv("POSTGRESQL_PASSWORD", "postgres")
+# Password should be set via environment variable - no default for security
+POSTGRESQL_PASSWORD = os.getenv("POSTGRESQL_PASSWORD")
 
 # SQLite paths (fallback)
 DB_PATH = str(BACKEND_DIR / "data/gold_predictions.db")

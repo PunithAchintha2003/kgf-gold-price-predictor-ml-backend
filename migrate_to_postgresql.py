@@ -19,12 +19,27 @@ except ImportError:
 BACKEND_DIR = Path(__file__).resolve().parent / "backend"
 SQLITE_DB_PATH = str(BACKEND_DIR / "data/gold_predictions.db")
 
-# PostgreSQL connection details (from environment or defaults)
-POSTGRESQL_HOST = os.getenv("POSTGRESQL_HOST", "localhost")
+# PostgreSQL connection details (from environment variables - REQUIRED)
+POSTGRESQL_HOST = os.getenv("POSTGRESQL_HOST")
 POSTGRESQL_PORT = os.getenv("POSTGRESQL_PORT", "5432")
-POSTGRESQL_DATABASE = os.getenv("POSTGRESQL_DATABASE", "gold_predictor")
-POSTGRESQL_USER = os.getenv("POSTGRESQL_USER", "postgres")
-POSTGRESQL_PASSWORD = os.getenv("POSTGRESQL_PASSWORD", "postgres")
+POSTGRESQL_DATABASE = os.getenv("POSTGRESQL_DATABASE")
+POSTGRESQL_USER = os.getenv("POSTGRESQL_USER")
+POSTGRESQL_PASSWORD = os.getenv("POSTGRESQL_PASSWORD")
+
+# Validate required environment variables
+if not all([POSTGRESQL_HOST, POSTGRESQL_DATABASE, POSTGRESQL_USER, POSTGRESQL_PASSWORD]):
+    print("❌ Error: Missing required PostgreSQL environment variables")
+    print("\nRequired environment variables:")
+    print("  POSTGRESQL_HOST")
+    print("  POSTGRESQL_DATABASE")
+    print("  POSTGRESQL_USER")
+    print("  POSTGRESQL_PASSWORD")
+    print("\nExample:")
+    print("  export POSTGRESQL_HOST=localhost")
+    print("  export POSTGRESQL_DATABASE=your_database")
+    print("  export POSTGRESQL_USER=your_user")
+    print("  export POSTGRESQL_PASSWORD=your_password")
+    sys.exit(1)
 
 
 def connect_postgresql():
@@ -44,9 +59,9 @@ def connect_postgresql():
         print("\nMake sure PostgreSQL is running and credentials are correct.")
         print("\nYou can set connection details via environment variables:")
         print("  export POSTGRESQL_HOST=localhost")
-        print("  export POSTGRESQL_DATABASE=gold_predictor")
-        print("  export POSTGRESQL_USER=postgres")
-        print("  export POSTGRESQL_PASSWORD=postgres")
+        print("  export POSTGRESQL_DATABASE=your_database")
+        print("  export POSTGRESQL_USER=your_user")
+        print("  export POSTGRESQL_PASSWORD=your_password")
         sys.exit(1)
 
 
