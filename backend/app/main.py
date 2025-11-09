@@ -1576,6 +1576,13 @@ async def health_check():
     }
 
 
+@app.head("/health")
+async def health_check_head():
+    """Handle HEAD requests to health endpoint (for health checks)"""
+    from fastapi.responses import Response
+    return Response(status_code=200)
+
+
 @app.post("/backup")
 async def create_backup():
     """Create backup of all predictions"""
@@ -2309,6 +2316,13 @@ async def favicon():
 @app.get("/")
 async def root():
     return {"message": "XAU/USD Real-time Data API with News Sentiment Analysis", "status": "running"}
+
+
+@app.head("/")
+async def root_head():
+    """Handle HEAD requests to root endpoint (for health checks)"""
+    from fastapi.responses import Response
+    return Response(status_code=200)
 
 
 @app.get("/xauusd/news-sentiment")
