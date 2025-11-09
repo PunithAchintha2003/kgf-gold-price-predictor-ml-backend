@@ -17,12 +17,6 @@
   ],
   "env": {
     "USE_POSTGRESQL": "true"
-  },
-  "functions": {
-    "run_backend.py": {
-      "maxDuration": 60,
-      "memory": 3008
-    }
   }
 }
 
