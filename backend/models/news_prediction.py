@@ -647,7 +647,20 @@ class NewsEnhancedLassoPredictor:
 
     def load_enhanced_model(self, filepath='enhanced_lasso_gold_model.pkl'):
         """Load the enhanced model"""
-        model_data = joblib.load(filepath)
+        from pathlib import Path
+        
+        model_path = Path(filepath)
+        if not model_path.exists():
+            raise FileNotFoundError(f"Enhanced model file not found: {filepath}")
+        
+        if not model_path.is_file():
+            raise ValueError(f"Path exists but is not a file: {filepath}")
+        
+        try:
+            model_data = joblib.load(filepath)
+        except Exception as e:
+            logger.error(f"Failed to load model from {filepath}: {e}")
+            raise
 
         self.model = model_data['model']
         self.scaler = model_data['scaler']

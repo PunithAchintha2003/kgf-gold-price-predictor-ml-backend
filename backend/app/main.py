@@ -400,21 +400,39 @@ except:
 
 # Initialize News-Enhanced Lasso predictor
 news_enhanced_predictor = NewsEnhancedLassoPredictor()
-try:
-    enhanced_model_path = str(
-        BACKEND_DIR / 'models/enhanced_lasso_gold_model.pkl')
+
+# Try multiple possible paths for the enhanced model
+def find_enhanced_model_path():
+    """Find the enhanced model file in various possible locations"""
+    possible_paths = [
+        BACKEND_DIR / 'models/enhanced_lasso_gold_model.pkl',
+        Path(__file__).resolve().parent.parent / 'models/enhanced_lasso_gold_model.pkl',
+        Path.cwd() / 'backend/models/enhanced_lasso_gold_model.pkl',
+        Path.cwd() / 'models/enhanced_lasso_gold_model.pkl',
+    ]
+    
+    for path in possible_paths:
+        if path.exists() and path.is_file():
+            return str(path)
+    return None
+
+enhanced_model_path = find_enhanced_model_path()
+
+if enhanced_model_path:
+    try:
+        logger.info(f"Loading news-enhanced model from: {enhanced_model_path}")
+        news_enhanced_predictor.load_enhanced_model(enhanced_model_path)
+        logger.info("News-enhanced Lasso model loaded successfully")
+    except Exception as e:
+        logger.warning(
+            f"News-enhanced Lasso model found but failed to load: {e} - using regular Lasso model")
+        logger.debug(
+            f"Exception details: {type(e).__name__}: {str(e)}", exc_info=True)
+else:
+    # Model file doesn't exist - this is expected if not trained yet
     logger.info(
-        f"Attempting to load news-enhanced model from: {enhanced_model_path}")
-    news_enhanced_predictor.load_enhanced_model(enhanced_model_path)
-    logger.info("News-enhanced Lasso model loaded successfully")
-except Exception as e:
-    # Skip training on startup to avoid rate limiting
-    # The regular Lasso model will be used instead
-    logger.warning(
-        f"News-enhanced Lasso model not found or failed to load: {e} - using regular Lasso model (train offline to avoid rate limits)")
-    logger.debug(
-        f"Exception details: {type(e).__name__}: {str(e)}", exc_info=True)
-    # Optionally train offline with: python -m models.news_prediction
+        "News-enhanced Lasso model not found - using regular Lasso model. "
+        "Train the model offline with: python -m models.news_prediction to generate the model file.")
 
 
 def init_database():
