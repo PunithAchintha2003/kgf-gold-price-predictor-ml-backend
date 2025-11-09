@@ -39,9 +39,11 @@ Thumbs.db
 *.pkl
 *.joblib
 
-# Database backups
+# Database files (SQLite - using PostgreSQL in production)
+*.db
 *.db.backup
 *.db.bak
+backend/data/*.db
 
 # Logs
 *.log
