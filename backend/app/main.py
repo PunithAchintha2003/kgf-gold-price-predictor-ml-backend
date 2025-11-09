@@ -683,6 +683,10 @@ def save_prediction(prediction_date, predicted_price, actual_price=None, predict
         if prediction_method is None:
             prediction_method = get_ml_model_display_name()
 
+        # Convert numpy types to Python native types for PostgreSQL compatibility
+        predicted_price = float(predicted_price) if predicted_price is not None else None
+        actual_price = float(actual_price) if actual_price is not None else None
+
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
@@ -692,7 +696,7 @@ def save_prediction(prediction_date, predicted_price, actual_price=None, predict
                 error_percentage = abs(
                     predicted_price - actual_price) / actual_price * 100
                 # Accuracy - higher is better
-                accuracy = max(0, 100 - error_percentage)
+                accuracy = float(max(0, 100 - error_percentage))
 
             # Insert prediction (database-agnostic)
             db_type = get_db_type()
