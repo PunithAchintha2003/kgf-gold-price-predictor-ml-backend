@@ -38,7 +38,7 @@ if not all([POSTGRESQL_HOST, POSTGRESQL_DATABASE, POSTGRESQL_USER, POSTGRESQL_PA
     print("  export POSTGRESQL_HOST=localhost")
     print("  export POSTGRESQL_DATABASE=your_database")
     print("  export POSTGRESQL_USER=your_user")
-    print("  export POSTGRESQL_PASSWORD=your_password")
+    print("  export POSTGRESQL_PASSWORD=<set-your-password-here>")
     sys.exit(1)
 
 
@@ -61,7 +61,7 @@ def connect_postgresql():
         print("  export POSTGRESQL_HOST=localhost")
         print("  export POSTGRESQL_DATABASE=your_database")
         print("  export POSTGRESQL_USER=your_user")
-        print("  export POSTGRESQL_PASSWORD=your_password")
+        print("  export POSTGRESQL_PASSWORD=<set-your-password-here>")
         sys.exit(1)
 
 
@@ -124,7 +124,8 @@ def migrate_data():
         existing_count = pg_cursor.fetchone()[0]
 
         if existing_count > 0:
-            response = input(f"\n⚠️  PostgreSQL already has {existing_count} predictions. Overwrite? (y/N): ")
+            response = input(
+                f"\n⚠️  PostgreSQL already has {existing_count} predictions. Overwrite? (y/N): ")
             if response.lower() != 'y':
                 print("Migration cancelled")
                 return
@@ -174,7 +175,3 @@ if __name__ == "__main__":
     print("SQLite to PostgreSQL Migration Script")
     print("=" * 60)
     migrate_data()
-
-
-
-
