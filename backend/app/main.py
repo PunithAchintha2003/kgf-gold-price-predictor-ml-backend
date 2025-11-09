@@ -882,6 +882,7 @@ def get_accuracy_stats():
 
 def update_actual_prices_realtime():
     """Update actual prices for past predictions using real-time data for continuous accuracy updates"""
+    db_type = get_db_type()
     date_func_now = get_date_function(0)
     
     with get_db_connection() as conn:
@@ -889,13 +890,22 @@ def update_actual_prices_realtime():
 
         # Get predictions that need updating (including recent ones for real-time accuracy)
         # Only include predictions for dates that have market data available
-        cursor.execute(f'''
-            SELECT id, prediction_date, predicted_price, actual_price, accuracy_percentage
-            FROM predictions
-            WHERE prediction_date < {date_func_now}
-            AND actual_price IS NULL
-            ORDER BY prediction_date
-        ''')
+        if db_type == "postgresql":
+            cursor.execute(f'''
+                SELECT id, prediction_date, predicted_price, actual_price, accuracy_percentage
+                FROM predictions
+                WHERE prediction_date < {date_func_now}
+                    AND actual_price IS NULL
+                ORDER BY prediction_date
+            ''')
+        else:
+            cursor.execute(f'''
+                SELECT id, prediction_date, predicted_price, actual_price, accuracy_percentage
+                FROM predictions
+                WHERE prediction_date < {date_func_now}
+                    AND actual_price IS NULL
+                ORDER BY prediction_date
+            ''')
 
         predictions = cursor.fetchall()
 
@@ -1365,19 +1375,29 @@ def backfill_missing_predictions(days=90):
 
 def update_same_day_predictions():
     """Update predictions for today's date when market data becomes available"""
+    db_type = get_db_type()
     with get_db_connection() as conn:
         cursor = conn.cursor()
 
         today = datetime.now().strftime('%Y-%m-%d')
 
         # Get today's predictions that don't have actual prices yet
-        cursor.execute('''
-            SELECT id, prediction_date, predicted_price, actual_price, accuracy_percentage
-            FROM predictions
-            WHERE prediction_date = ?
-            AND actual_price IS NULL
-            ORDER BY created_at DESC
-        ''', (today,))
+        if db_type == "postgresql":
+            cursor.execute('''
+                SELECT id, prediction_date, predicted_price, actual_price, accuracy_percentage
+                FROM predictions
+                WHERE prediction_date = %s
+                    AND actual_price IS NULL
+                ORDER BY created_at DESC
+            ''', (today,))
+        else:
+            cursor.execute('''
+                SELECT id, prediction_date, predicted_price, actual_price, accuracy_percentage
+                FROM predictions
+                WHERE prediction_date = ?
+                    AND actual_price IS NULL
+                ORDER BY created_at DESC
+            ''', (today,))
 
         predictions = cursor.fetchall()
 
@@ -1412,11 +1432,18 @@ def update_same_day_predictions():
                 accuracy = max(0, 100 - error_percentage)
 
                 # Update prediction with new accuracy
-                cursor.execute('''
-                    UPDATE predictions
-                    SET actual_price = ?, accuracy_percentage = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                ''', (actual_price, accuracy, pred_id))
+                if db_type == "postgresql":
+                    cursor.execute('''
+                        UPDATE predictions
+                        SET actual_price = %s, accuracy_percentage = %s, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    ''', (actual_price, accuracy, pred_id))
+                else:
+                    cursor.execute('''
+                        UPDATE predictions
+                        SET actual_price = ?, accuracy_percentage = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    ''', (actual_price, accuracy, pred_id))
 
                 updated_count += 1
                 logger.info(
