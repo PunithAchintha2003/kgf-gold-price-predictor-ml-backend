@@ -38,7 +38,7 @@ if not all([POSTGRESQL_HOST, POSTGRESQL_DATABASE, POSTGRESQL_USER, POSTGRESQL_PA
     print("  export POSTGRESQL_HOST=localhost")
     print("  export POSTGRESQL_DATABASE=your_database")
     print("  export POSTGRESQL_USER=your_user")
-    print("  export POSTGRESQL_PASSWORD=<set-your-password-here>")
+    print("  # Set POSTGRESQL_PASSWORD environment variable")
     sys.exit(1)
 
 
@@ -61,7 +61,7 @@ def connect_postgresql():
         print("  export POSTGRESQL_HOST=localhost")
         print("  export POSTGRESQL_DATABASE=your_database")
         print("  export POSTGRESQL_USER=your_user")
-        print("  export POSTGRESQL_PASSWORD=<set-your-password-here>")
+        print("  # Set POSTGRESQL_PASSWORD environment variable")
         sys.exit(1)
 
 
