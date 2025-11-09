@@ -20,3 +20,13 @@ services:
         value: 60
       - key: USE_POSTGRESQL
         value: "true"
+      - key: POSTGRESQL_HOST
+        value: "dpg-d4864ajipnbc73d9njvg-a"
+      - key: POSTGRESQL_DATABASE
+        value: "gold_predictor"
+      - key: POSTGRESQL_USER
+        value: "gold_predictor_user"
+      - key: POSTGRESQL_PASSWORD
+        value: "bwRgsaY55DT2Qll7mVLV10NWQDrCDiNe"
+      - key: POSTGRESQL_PORT
+        value: "5432"
