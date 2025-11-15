@@ -2957,21 +2957,19 @@ def make_daily_prediction_enhanced():
         logger.info("Making daily prediction with News-Enhanced Lasso model")
         logger.info("=" * 60)
         
-        # Determine prediction date (next trading day)
+        # Determine prediction date (next trading day - skip weekends)
         from datetime import datetime, timedelta
         today = datetime.now()
         
-        # If it's Friday, predict for Monday (skip weekend)
+        # Don't make predictions on weekends
+        if today.weekday() in [5, 6]:  # Saturday or Sunday
+            raise ValueError("Market is closed on weekends - no predictions needed")
+        
+        # Calculate next trading day
         if today.weekday() == 4:  # Friday
-            prediction_date = (today + timedelta(days=3)).strftime('%Y-%m-%d')
-        # If it's Saturday, predict for Monday
-        elif today.weekday() == 5:  # Saturday
-            prediction_date = (today + timedelta(days=2)).strftime('%Y-%m-%d')
-        # If it's Sunday, predict for Monday
-        elif today.weekday() == 6:  # Sunday
-            prediction_date = (today + timedelta(days=1)).strftime('%Y-%m-%d')
+            prediction_date = (today + timedelta(days=3)).strftime('%Y-%m-%d')  # Predict Monday
         else:
-            # Weekday - predict for next day
+            # Monday-Thursday - predict next day
             prediction_date = (today + timedelta(days=1)).strftime('%Y-%m-%d')
         
         logger.info(f"Prediction date: {prediction_date}")
@@ -3159,7 +3157,12 @@ async def daily_prediction_scheduler():
             target_hour = 17
             target_minute = 30
             
-            # Check if it's time to retrain and predict
+            # Skip weekends - Market is closed on Saturday (5) and Sunday (6)
+            if now.weekday() in [5, 6]:
+                await asyncio.sleep(3600)  # Check again in 1 hour
+                continue
+            
+            # Check if it's time to retrain and predict (Monday-Friday only)
             if now.hour == target_hour and now.minute >= target_minute and now.minute < target_minute + 5:
                 # Check if we already processed today
                 today_str = now.strftime('%Y-%m-%d')
