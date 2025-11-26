@@ -139,7 +139,28 @@ def init_database():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
-            
+
+            # Clean up duplicate records before adding unique constraint
+            try:
+                # Delete duplicates, keeping only the most recent record for each date
+                cursor.execute('''
+                    DELETE FROM predictions p1
+                    WHERE p1.id NOT IN (
+                        SELECT MAX(p2.id)
+                        FROM predictions p2
+                        GROUP BY p2.prediction_date
+                    )
+                ''')
+                deleted_count = cursor.rowcount
+                if deleted_count > 0:
+                    logger.info(
+                        f"Cleaned up {deleted_count} duplicate prediction records")
+                conn.commit()
+            except Exception as e:
+                logger.warning(
+                    f"Could not clean duplicates (table may be empty or already clean): {e}")
+                conn.rollback()
+
             # Ensure UNIQUE constraint exists on prediction_date
             try:
                 cursor.execute('''
@@ -153,8 +174,14 @@ def init_database():
                         END IF;
                     END $$;
                 ''')
+                logger.info(
+                    "Unique constraint on prediction_date verified/created")
             except Exception as e:
-                logger.warning(f"Could not add unique constraint (may already exist): {e}")
+                # Check if constraint already exists (different error message)
+                if "already exists" in str(e).lower() or "duplicate key" in str(e).lower():
+                    logger.debug(f"Unique constraint already exists: {e}")
+                else:
+                    logger.warning(f"Could not add unique constraint: {e}")
         else:
             # SQLite
             cursor.execute('''
