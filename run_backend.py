@@ -6,11 +6,11 @@ import uvicorn
 import sys
 import os
 import signal
-import time
 from pathlib import Path
 
 # Get port from environment variable (Render provides this)
 PORT = int(os.getenv("PORT", 8001))
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
 
 def signal_handler(sig, frame):
@@ -76,12 +76,23 @@ def main():
     if not check_backend_structure():
         sys.exit(1)
 
+    # Check for .env file (optional warning)
+    env_file = Path(".env")
+    if not env_file.exists() and ENVIRONMENT == "development":
+        print("⚠️  Warning: .env file not found. Using default/OS environment variables.")
+        print("   Create .env file for database configuration (see README.md)\n")
+
     print(f"📊 Backend will be available at: http://0.0.0.0:{PORT}")
     print(f"📡 WebSocket endpoint: ws://0.0.0.0:{PORT}/ws/xauusd")
     print(f"🌐 API docs: http://0.0.0.0:{PORT}/docs")
-    print("🔄 Auto-reload: Disabled (Production Mode)")
+
+    # Enable auto-reload in development mode
+    is_development = ENVIRONMENT.lower() == "development"
+    reload_status = "Enabled (Development Mode)" if is_development else "Disabled (Production Mode)"
+    print(f"🔄 Auto-reload: {reload_status}")
+
     print("📝 Logs: Check terminal output")
-    print(f"🔧 Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    print(f"🔧 Environment: {ENVIRONMENT}")
     print(f"🔢 Port: {PORT}")
     print("\n" + "=" * 60)
     print("Press Ctrl+C to stop the server")
@@ -99,12 +110,15 @@ def main():
         if str(project_root) not in sys.path:
             sys.path.insert(0, str(project_root))
 
+        # Enable auto-reload in development mode
+        reload_enabled = is_development
+
         uvicorn.run(
             "app.main:app",
             host="0.0.0.0",
             port=PORT,
-            reload=False,
-            log_level="info",
+            reload=reload_enabled,
+            log_level="info" if ENVIRONMENT == "production" else "debug",
             access_log=True
         )
     except KeyboardInterrupt:

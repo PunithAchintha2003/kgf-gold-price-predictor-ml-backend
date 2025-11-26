@@ -18,6 +18,14 @@ from sklearn.linear_model import Lasso
 from sklearn.metrics import mean_squared_error, r2_score
 import joblib
 import warnings
+import sys
+from pathlib import Path
+
+# Add backend directory to path for config import
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+
 from config.news_config import NEWS_API_KEY, ALPHA_VANTAGE_KEY, RSS_FEEDS, GOLD_KEYWORDS
 
 warnings.filterwarnings('ignore')
