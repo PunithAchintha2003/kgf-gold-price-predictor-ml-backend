@@ -24,3 +24,4 @@ def create_yf_ticker(symbol: str, session=None):
     return yf.Ticker(symbol)
 
 
+

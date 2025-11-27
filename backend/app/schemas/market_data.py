@@ -39,3 +39,4 @@ class RealtimePriceResponse(BaseModel):
     message: Optional[str] = None
 
 
+

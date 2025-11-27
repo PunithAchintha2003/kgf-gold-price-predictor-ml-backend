@@ -13,3 +13,4 @@ class ExchangeRateResponse(BaseModel):
     message: Optional[str] = None
 
 
+
