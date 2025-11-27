@@ -46,8 +46,15 @@ class Settings:
         self.backup_db_path: str = str(
             self.data_dir / "gold_predictions_backup.db")
 
-        # CORS
-        self.cors_origins: list = ["*"]
+        # CORS - Allow specific origins or all if not specified
+        cors_origins_env = os.getenv("CORS_ORIGINS")
+        if cors_origins_env:
+            # Parse comma-separated list from environment variable
+            self.cors_origins: list = [origin.strip() for origin in cors_origins_env.split(",")]
+        else:
+            # Default: Allow all origins (for development)
+            # In production, set CORS_ORIGINS environment variable
+            self.cors_origins: list = ["*"]
 
 
 # Ensure data directory exists
