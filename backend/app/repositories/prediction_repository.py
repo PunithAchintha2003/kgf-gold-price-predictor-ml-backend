@@ -197,37 +197,64 @@ class PredictionRepository:
     @staticmethod
     def get_accuracy_stats() -> Dict:
         """Get accuracy statistics"""
-        date_func_30 = get_date_function(-30)
+        db_type = get_db_type()
         
         with get_db_connection() as conn:
             cursor = conn.cursor()
             
             # Get accuracy for unique predictions with actual prices
-            cursor.execute(f'''
-                SELECT AVG(accuracy_percentage), COUNT(DISTINCT prediction_date)
-                FROM predictions p1
-                WHERE accuracy_percentage IS NOT NULL
-                AND prediction_date >= {date_func_30}
-                AND p1.created_at = (
-                    SELECT MAX(p2.created_at)
-                    FROM predictions p2
-                    WHERE p2.prediction_date = p1.prediction_date
-                )
-            ''')
+            if db_type == "postgresql":
+                cursor.execute('''
+                    SELECT AVG(accuracy_percentage), COUNT(DISTINCT prediction_date)
+                    FROM predictions p1
+                    WHERE accuracy_percentage IS NOT NULL
+                    AND prediction_date >= CURRENT_DATE - INTERVAL '30 days'
+                    AND p1.created_at = (
+                        SELECT MAX(p2.created_at)
+                        FROM predictions p2
+                        WHERE p2.prediction_date = p1.prediction_date
+                    )
+                ''')
+            else:
+                date_func_30 = get_date_function(-30)
+                cursor.execute(f'''
+                    SELECT AVG(accuracy_percentage), COUNT(DISTINCT prediction_date)
+                    FROM predictions p1
+                    WHERE accuracy_percentage IS NOT NULL
+                    AND prediction_date >= {date_func_30}
+                    AND p1.created_at = (
+                        SELECT MAX(p2.created_at)
+                        FROM predictions p2
+                        WHERE p2.prediction_date = p1.prediction_date
+                    )
+                ''')
             
             accuracy_result = cursor.fetchone()
             
             # Get total unique prediction dates
-            cursor.execute(f'''
-                SELECT COUNT(DISTINCT prediction_date)
-                FROM predictions p1
-                WHERE prediction_date >= {date_func_30}
-                AND p1.created_at = (
-                    SELECT MAX(p2.created_at)
-                    FROM predictions p2
-                    WHERE p2.prediction_date = p1.prediction_date
-                )
-            ''')
+            if db_type == "postgresql":
+                cursor.execute('''
+                    SELECT COUNT(DISTINCT prediction_date)
+                    FROM predictions p1
+                    WHERE prediction_date >= CURRENT_DATE - INTERVAL '30 days'
+                    AND p1.created_at = (
+                        SELECT MAX(p2.created_at)
+                        FROM predictions p2
+                        WHERE p2.prediction_date = p1.prediction_date
+                    )
+                ''')
+            else:
+                date_func_30 = get_date_function(-30)
+                cursor.execute(f'''
+                    SELECT COUNT(DISTINCT prediction_date)
+                    FROM predictions p1
+                    WHERE prediction_date >= {date_func_30}
+                    AND p1.created_at = (
+                        SELECT MAX(p2.created_at)
+                        FROM predictions p2
+                        WHERE p2.prediction_date = p1.prediction_date
+                    )
+                ''')
             
             total_result = cursor.fetchone()
         

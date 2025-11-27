@@ -202,6 +202,41 @@ async def get_realtime_price():
     return market_data_service.get_realtime_price()
 
 
+@app.get("/xauusd/accuracy-visualization")
+async def get_accuracy_visualization():
+    """Get accuracy statistics for visualization"""
+    try:
+        stats = prediction_repo.get_accuracy_stats()
+        return {
+            "status": "success",
+            "data": stats
+        }
+    except Exception as e:
+        logger.error(f"Error getting accuracy stats: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.get("/xauusd/prediction-history")
+async def get_prediction_history(days: int = 30):
+    """Get historical predictions"""
+    try:
+        predictions = prediction_repo.get_historical_predictions(days=days)
+        return {
+            "status": "success",
+            "data": predictions,
+            "days": days
+        }
+    except Exception as e:
+        logger.error(f"Error getting prediction history: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
 @app.get("/exchange-rate/{from_currency}/{to_currency}")
 async def get_exchange_rate(from_currency: str, to_currency: str):
     """Get exchange rate between currencies"""

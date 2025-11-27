@@ -27,3 +27,4 @@ async def health_check_head():
     from fastapi.responses import Response
     return Response(status_code=200)
 
+
