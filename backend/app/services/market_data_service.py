@@ -108,11 +108,27 @@ class MarketDataService:
             }
         except Exception as e:
             logger.error(f"Error getting daily data: {e}", exc_info=True)
+            # Return consistent structure even on error
+            try:
+                all_historical_predictions = self.prediction_repo.get_historical_predictions(days)
+                accuracy_stats = self.prediction_repo.get_accuracy_stats()
+            except:
+                all_historical_predictions = []
+                accuracy_stats = {
+                    'average_accuracy': 0.0,
+                    'r2_score': 0.0,
+                    'total_predictions': 0,
+                    'evaluated_predictions': 0
+                }
+            
             return {
                 "symbol": "XAUUSD",
                 "timeframe": "daily",
                 "data": [],
+                "historical_predictions": all_historical_predictions,
+                "accuracy_stats": accuracy_stats,
                 "current_price": 0.0,
+                "prediction": None,
                 "timestamp": datetime.now().isoformat(),
                 "status": "error",
                 "message": str(e)
