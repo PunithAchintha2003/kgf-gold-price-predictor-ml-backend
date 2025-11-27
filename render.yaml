@@ -20,6 +20,8 @@ services:
         value: 60
       - key: USE_POSTGRESQL
         value: "true"
+      - key: CORS_ORIGINS
+        value: "http://localhost:4000,https://kgf-gold-price-predictor.onrender.com"
       # PostgreSQL connection details are auto-set when database is linked in Render
       # Or set manually in Render Dashboard → Environment Variables
       # POSTGRESQL_HOST, POSTGRESQL_DATABASE, POSTGRESQL_USER, POSTGRESQL_PASSWORD, POSTGRESQL_PORT
