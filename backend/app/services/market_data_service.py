@@ -74,14 +74,21 @@ class MarketDataService:
                     "volume": int(row['Volume']) if not pd.isna(row['Volume']) else 0
                 })
             
-            # Add predictions to data points
+            # Add predictions to data points - ensure all data points have prediction fields
             predictions_by_date = {p['date']: p for p in all_historical_predictions}
+            data_with_predictions = 0
             for data_point in daily_data:
                 date = data_point['date']
                 if date in predictions_by_date:
                     pred = predictions_by_date[date]
                     data_point['predicted_price'] = pred.get('predicted_price')
                     data_point['actual_price'] = pred.get('actual_price')
+                    if data_point.get('predicted_price') is not None:
+                        data_with_predictions += 1
+                else:
+                    # Ensure consistent structure - set to None if no prediction
+                    data_point['predicted_price'] = None
+                    data_point['actual_price'] = None
             
             current_price = round(float(hist['Close'].iloc[-1]), 2)
             
@@ -95,6 +102,41 @@ class MarketDataService:
                     "prediction_method": prediction_method or "Lasso Regression"
                 }
             
+            # Calculate metadata for frontend
+            if daily_data:
+                market_data_range = f"{daily_data[0]['date']} to {daily_data[-1]['date']}"
+            else:
+                market_data_range = "N/A"
+            
+            if all_historical_predictions:
+                prediction_range = f"{all_historical_predictions[0]['date']} to {all_historical_predictions[-1]['date']}"
+            else:
+                prediction_range = "N/A"
+            
+            # Calculate date ranges
+            full_date_range = market_data_range
+            if all_historical_predictions:
+                all_dates = [d['date'] for d in daily_data] + [p['date'] for p in all_historical_predictions]
+                if all_dates:
+                    full_date_range = f"{min(all_dates)} to {max(all_dates)}"
+            
+            # Count predictions before Oct 6, 2025
+            predictions_before_oct6 = len([p for p in all_historical_predictions if p['date'] < '2025-10-06'])
+            data_before_oct6 = len([d for d in daily_data if d['date'] < '2025-10-06'])
+            
+            # Build metadata object
+            metadata = {
+                "totalDataPoints": len(daily_data),
+                "totalPredictions": len(all_historical_predictions),
+                "dataWithPredictedPrice": data_with_predictions,
+                "dataBeforeOct6": data_before_oct6,
+                "predictionsBeforeOct6": predictions_before_oct6,
+                "fullDateRange": full_date_range,
+                "marketDataRange": market_data_range,
+                "predictionRange": prediction_range,
+                "note": "Backend includes all available market data and predictions"
+            }
+            
             return {
                 "symbol": "XAUUSD",
                 "timeframe": "daily",
@@ -103,6 +145,7 @@ class MarketDataService:
                 "accuracy_stats": accuracy_stats,
                 "current_price": current_price,
                 "prediction": prediction_obj,
+                "metadata": metadata,
                 "timestamp": datetime.now().isoformat(),
                 "status": "success"
             }
@@ -121,6 +164,19 @@ class MarketDataService:
                     'evaluated_predictions': 0
                 }
             
+            # Empty metadata for error case
+            metadata = {
+                "totalDataPoints": 0,
+                "totalPredictions": len(all_historical_predictions),
+                "dataWithPredictedPrice": 0,
+                "dataBeforeOct6": 0,
+                "predictionsBeforeOct6": 0,
+                "fullDateRange": "N/A",
+                "marketDataRange": "N/A",
+                "predictionRange": "N/A" if not all_historical_predictions else f"{all_historical_predictions[0]['date']} to {all_historical_predictions[-1]['date']}",
+                "note": "Error occurred while fetching data"
+            }
+            
             return {
                 "symbol": "XAUUSD",
                 "timeframe": "daily",
@@ -129,6 +185,7 @@ class MarketDataService:
                 "accuracy_stats": accuracy_stats,
                 "current_price": 0.0,
                 "prediction": None,
+                "metadata": metadata,
                 "timestamp": datetime.now().isoformat(),
                 "status": "error",
                 "message": str(e)
