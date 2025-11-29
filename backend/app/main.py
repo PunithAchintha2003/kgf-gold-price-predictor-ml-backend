@@ -223,6 +223,70 @@ async def get_accuracy_visualization():
         }
 
 
+@app.get("/xauusd/prediction-stats")
+async def get_prediction_stats():
+    """Get comprehensive prediction statistics (all time)"""
+    try:
+        stats = prediction_repo.get_comprehensive_stats()
+        return {
+            "status": "success",
+            "data": {
+                "total_predictions": stats['total_predictions'],
+                "evaluated": {
+                    "count": stats['evaluated_predictions'],
+                    "with_results": stats['evaluated_predictions'],
+                    "average_accuracy": stats['average_accuracy']
+                },
+                "pending": {
+                    "count": stats['pending_predictions'],
+                    "awaiting_market_results": stats['pending_predictions']
+                },
+                "r2_score": stats.get('r2_score'),
+                "evaluation_rate_percent": stats['evaluation_rate']
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting prediction stats: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.get("/xauusd/pending-predictions")
+async def get_pending_predictions():
+    """Get list of pending predictions awaiting market results"""
+    try:
+        pending = prediction_repo.get_pending_predictions()
+        return {
+            "status": "success",
+            "data": {
+                "pending_count": len(pending),
+                "predictions": pending
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting pending predictions: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.post("/xauusd/update-pending-predictions")
+async def update_pending_predictions():
+    """Update pending predictions with actual market prices"""
+    try:
+        result = market_data_service.update_pending_predictions()
+        return result
+    except Exception as e:
+        logger.error(f"Error updating pending predictions: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
 @app.get("/xauusd/prediction-history")
 async def get_prediction_history(days: int = 30):
     """Get historical predictions"""
