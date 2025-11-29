@@ -31,13 +31,23 @@ def init_postgresql_pool() -> bool:
         return False
 
     try:
+        # Build connection parameters with SSL support for cloud databases (e.g., Render)
+        connection_params = {
+            'host': settings.postgresql_host,
+            'port': settings.postgresql_port,
+            'database': settings.postgresql_database,
+            'user': settings.postgresql_user,
+            'password': settings.postgresql_password
+        }
+        
+        # Add SSL mode for cloud databases (Render, Heroku, etc.)
+        # If hostname looks like a cloud database, require SSL
+        if 'render.com' in settings.postgresql_host or 'amazonaws.com' in settings.postgresql_host or 'herokuapp.com' in settings.postgresql_host:
+            connection_params['sslmode'] = 'require'
+        
         _postgresql_pool = psycopg2.pool.SimpleConnectionPool(
             1, 20,  # min and max connections
-            host=settings.postgresql_host,
-            port=settings.postgresql_port,
-            database=settings.postgresql_database,
-            user=settings.postgresql_user,
-            password=settings.postgresql_password
+            **connection_params
         )
         if _postgresql_pool:
             logger.info(
