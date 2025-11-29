@@ -210,6 +210,117 @@ class MarketDataService:
                 "timestamp": datetime.now().isoformat(),
                 "status": "success"
             }
+    
+    def update_pending_predictions(self) -> Dict:
+        """Update pending predictions with actual market prices"""
+        try:
+            # Get all pending predictions
+            pending = self.prediction_repo.get_pending_predictions()
+            
+            if not pending:
+                return {
+                    "status": "success",
+                    "message": "No pending predictions to update",
+                    "updated_count": 0,
+                    "failed_count": 0
+                }
+            
+            # Fetch market data for a period that covers all pending predictions
+            # Get the oldest pending prediction date
+            oldest_date = min([p['date'] for p in pending])
+            oldest_dt = datetime.strptime(oldest_date, "%Y-%m-%d")
+            days_back = (datetime.now() - oldest_dt).days + 10  # Add buffer
+            
+            period = f"{max(days_back, 90)}d"
+            hist, symbol_used = market_data_cache.get_cached_market_data(period=period)
+            
+            if hist is None or hist.empty:
+                return {
+                    "status": "error",
+                    "message": "Unable to fetch market data",
+                    "updated_count": 0,
+                    "failed_count": len(pending)
+                }
+            
+            # Create a date-to-price mapping
+            price_map = {}
+            for date, row in hist.iterrows():
+                date_str = date.strftime("%Y-%m-%d")
+                price_map[date_str] = float(row['Close'])
+            
+            # Update each pending prediction
+            updated_count = 0
+            failed_count = 0
+            updated_dates = []
+            failed_dates = []
+            skipped_dates = []
+            
+            # Get sorted list of available dates for finding nearest trading day
+            available_dates = sorted([datetime.strptime(d, "%Y-%m-%d") for d in price_map.keys()])
+            
+            for pred in pending:
+                pred_date = pred['date']
+                pred_dt = datetime.strptime(pred_date, "%Y-%m-%d")
+                
+                if pred_date in price_map:
+                    # Direct match - update with actual price
+                    actual_price = price_map[pred_date]
+                    if self.prediction_repo.update_prediction_with_actual_price(pred_date, actual_price):
+                        updated_count += 1
+                        updated_dates.append(pred_date)
+                        logger.info(f"Updated prediction for {pred_date} with actual price ${actual_price:.2f}")
+                    else:
+                        failed_count += 1
+                        failed_dates.append(pred_date)
+                elif pred_dt > datetime.now():
+                    # Future date - can't have actual price yet
+                    skipped_dates.append(pred_date)
+                    logger.info(f"Prediction date {pred_date} is in the future, skipping")
+                else:
+                    # Date not in price_map - might be weekend/holiday
+                    # Try to find the nearest previous trading day
+                    actual_price = None
+                    for available_dt in reversed(available_dates):
+                        if available_dt <= pred_dt:
+                            # Use the last trading day's price
+                            last_trading_date = available_dt.strftime("%Y-%m-%d")
+                            actual_price = price_map.get(last_trading_date)
+                            if actual_price:
+                                logger.info(f"Using last trading day ({last_trading_date}) price for {pred_date} (likely weekend/holiday)")
+                                break
+                    
+                    if actual_price:
+                        if self.prediction_repo.update_prediction_with_actual_price(pred_date, actual_price):
+                            updated_count += 1
+                            updated_dates.append(pred_date)
+                            logger.info(f"Updated prediction for {pred_date} with last trading day price ${actual_price:.2f}")
+                        else:
+                            failed_count += 1
+                            failed_dates.append(pred_date)
+                    else:
+                        failed_count += 1
+                        failed_dates.append(pred_date)
+                        logger.warning(f"No market data found for date {pred_date} and no previous trading day available")
+            
+            return {
+                "status": "success",
+                "message": f"Updated {updated_count} predictions, {failed_count} failed, {len(skipped_dates)} skipped (future dates)",
+                "updated_count": updated_count,
+                "failed_count": failed_count,
+                "skipped_count": len(skipped_dates),
+                "updated_dates": updated_dates,
+                "failed_dates": failed_dates,
+                "skipped_dates": skipped_dates,
+                "total_pending": len(pending)
+            }
+        except Exception as e:
+            logger.error(f"Error updating pending predictions: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "message": str(e),
+                "updated_count": 0,
+                "failed_count": 0
+            }
 
 
 
