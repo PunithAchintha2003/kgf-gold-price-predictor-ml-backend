@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class PredictionRepository:
     """Repository for prediction database operations"""
-    
+
     @staticmethod
     def save_prediction(
         prediction_date: str,
@@ -22,18 +22,21 @@ class PredictionRepository:
         """Save prediction to database with accuracy calculation"""
         try:
             # Convert numpy types to Python native types
-            predicted_price = float(predicted_price) if predicted_price is not None else None
-            actual_price = float(actual_price) if actual_price is not None else None
-            
+            predicted_price = float(
+                predicted_price) if predicted_price is not None else None
+            actual_price = float(
+                actual_price) if actual_price is not None else None
+
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                
+
                 # Calculate accuracy if actual price is available
                 accuracy = None
                 if actual_price and predicted_price:
-                    error_percentage = abs(predicted_price - actual_price) / actual_price * 100
+                    error_percentage = abs(
+                        predicted_price - actual_price) / actual_price * 100
                     accuracy = float(max(0, 100 - error_percentage))
-                
+
                 # Insert or update prediction
                 db_type = get_db_type()
                 if db_type == "postgresql":
@@ -42,7 +45,7 @@ class PredictionRepository:
                         SELECT id FROM predictions WHERE prediction_date = %s
                     ''', (prediction_date,))
                     existing = cursor.fetchone()
-                    
+
                     if existing:
                         # Update existing prediction
                         cursor.execute('''
@@ -68,7 +71,7 @@ class PredictionRepository:
                         has_prediction_method = 'prediction_method' in columns
                     except:
                         has_prediction_method = False
-                    
+
                     if has_prediction_method:
                         cursor.execute('''
                             INSERT OR REPLACE INTO predictions 
@@ -81,22 +84,24 @@ class PredictionRepository:
                             (prediction_date, predicted_price, actual_price, accuracy_percentage, updated_at)
                             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
                         ''', (prediction_date, predicted_price, actual_price, accuracy))
-                
+
                 conn.commit()
-                logger.info(f"Saved prediction for {prediction_date}: ${predicted_price:.2f}")
+                logger.info(
+                    f"Saved prediction for {prediction_date}: ${predicted_price:.2f}")
                 return True
         except Exception as e:
-            logger.error(f"Error saving prediction for {prediction_date}: {e}", exc_info=True)
+            logger.error(
+                f"Error saving prediction for {prediction_date}: {e}", exc_info=True)
             return False
-    
+
     @staticmethod
     def prediction_exists_for_date(prediction_date: str) -> bool:
         """Check if a prediction exists for the given date"""
         db_type = get_db_type()
-        
+
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
+
             if db_type == "postgresql":
                 cursor.execute('''
                     SELECT COUNT(*) FROM predictions 
@@ -107,19 +112,19 @@ class PredictionRepository:
                     SELECT COUNT(*) FROM predictions 
                     WHERE prediction_date = ?
                 ''', (prediction_date,))
-            
+
             count = cursor.fetchone()[0]
-        
+
         return count > 0
-    
+
     @staticmethod
     def get_prediction_for_date(prediction_date: str) -> Optional[float]:
         """Get the most recent prediction for the given date"""
         db_type = get_db_type()
-        
+
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
+
             if db_type == "postgresql":
                 cursor.execute('''
                     SELECT predicted_price FROM predictions 
@@ -134,20 +139,20 @@ class PredictionRepository:
                     ORDER BY created_at DESC 
                     LIMIT 1
                 ''', (prediction_date,))
-            
+
             result = cursor.fetchone()
-        
+
         return float(result[0]) if result and result[0] is not None else None
-    
+
     @staticmethod
     def get_historical_predictions(days: int = 90) -> List[Dict]:
         """Get historical predictions for the specified number of days"""
         date_func = get_date_function(-days)
         db_type = get_db_type()
-        
+
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
+
             if db_type == "postgresql":
                 cursor.execute('''
                     SELECT prediction_date, predicted_price, actual_price, prediction_method
@@ -172,41 +177,54 @@ class PredictionRepository:
                     )
                     ORDER BY prediction_date ASC
                 ''')
-            
+
             results = cursor.fetchall()
-        
-        # Convert to list of dictionaries
+
+        # Convert to list of dictionaries, filtering out weekends
         predictions = []
         for row in results:
             date_value = row[0]
             if hasattr(date_value, 'strftime'):
                 date_str = date_value.strftime('%Y-%m-%d')
+                # Check if it's a weekend
+                weekday = date_value.weekday()
             elif isinstance(date_value, str):
                 date_str = date_value
+                from datetime import datetime
+                try:
+                    date_obj = datetime.strptime(date_value, '%Y-%m-%d')
+                    weekday = date_obj.weekday()
+                except:
+                    weekday = None
             else:
                 date_str = str(date_value)
-            
+                weekday = None
+
+            # Skip weekends (Saturday=5, Sunday=6)
+            if weekday is not None and weekday >= 5:
+                continue
+
             predictions.append({
                 'date': date_str,
                 'predicted_price': round(float(row[1]), 2) if row[1] is not None else None,
                 'actual_price': round(float(row[2]), 2) if row[2] is not None else None,
                 'method': row[3] if len(row) > 3 and row[3] else 'Lasso Regression'
             })
-        
+
         return predictions
-    
+
     @staticmethod
     def get_accuracy_stats() -> Dict:
         """Get accuracy statistics"""
         db_type = get_db_type()
-        
+
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
-            # Get accuracy for unique predictions with actual prices
+
+            # Get accuracy for unique predictions with actual prices (excluding weekends)
             if db_type == "postgresql":
                 cursor.execute('''
-                    SELECT AVG(accuracy_percentage), COUNT(DISTINCT prediction_date)
+                    SELECT prediction_date, accuracy_percentage
                     FROM predictions p1
                     WHERE accuracy_percentage IS NOT NULL
                     AND prediction_date >= CURRENT_DATE - INTERVAL '30 days'
@@ -219,7 +237,7 @@ class PredictionRepository:
             else:
                 date_func_30 = get_date_function(-30)
                 cursor.execute(f'''
-                    SELECT AVG(accuracy_percentage), COUNT(DISTINCT prediction_date)
+                    SELECT prediction_date, accuracy_percentage
                     FROM predictions p1
                     WHERE accuracy_percentage IS NOT NULL
                     AND prediction_date >= {date_func_30}
@@ -229,13 +247,33 @@ class PredictionRepository:
                         WHERE p2.prediction_date = p1.prediction_date
                     )
                 ''')
-            
-            accuracy_result = cursor.fetchone()
-            
-            # Get total unique prediction dates
+
+            accuracy_results = cursor.fetchall()
+            # Filter out weekends and calculate average
+            evaluated_count = 0
+            accuracy_values = []
+            for row in accuracy_results:
+                date_value = row[0]
+                if hasattr(date_value, 'weekday'):
+                    weekday = date_value.weekday()
+                elif isinstance(date_value, str):
+                    date_obj = datetime.strptime(date_value, '%Y-%m-%d')
+                    weekday = date_obj.weekday()
+                else:
+                    continue
+
+                # Only count weekdays (Monday=0 to Friday=4)
+                if weekday < 5:
+                    evaluated_count += 1
+                    accuracy_values.append(float(row[1]))
+
+            avg_accuracy = sum(accuracy_values) / \
+                len(accuracy_values) if accuracy_values else 0.0
+
+            # Get total unique prediction dates (excluding weekends)
             if db_type == "postgresql":
                 cursor.execute('''
-                    SELECT COUNT(DISTINCT prediction_date)
+                    SELECT DISTINCT prediction_date
                     FROM predictions p1
                     WHERE prediction_date >= CURRENT_DATE - INTERVAL '30 days'
                     AND p1.created_at = (
@@ -247,7 +285,7 @@ class PredictionRepository:
             else:
                 date_func_30 = get_date_function(-30)
                 cursor.execute(f'''
-                    SELECT COUNT(DISTINCT prediction_date)
+                    SELECT DISTINCT prediction_date
                     FROM predictions p1
                     WHERE prediction_date >= {date_func_30}
                     AND p1.created_at = (
@@ -256,17 +294,35 @@ class PredictionRepository:
                         WHERE p2.prediction_date = p1.prediction_date
                     )
                 ''')
-            
-            total_result = cursor.fetchone()
-            
+
+            total_dates = cursor.fetchall()
+            # Filter out weekends - only count weekdays
+            total_count = 0
+            for row in total_dates:
+                date_value = row[0]
+                if hasattr(date_value, 'weekday'):
+                    weekday = date_value.weekday()
+                elif isinstance(date_value, str):
+                    date_obj = datetime.strptime(date_value, '%Y-%m-%d')
+                    weekday = date_obj.weekday()
+                else:
+                    continue
+
+                # Only count weekdays (Monday=0 to Friday=4)
+                if weekday < 5:
+                    total_count += 1
+
             # Get predicted and actual prices for R² calculation
+            # Exclude manual entries (where prediction_method = 'Manual Entry' or predicted_price = actual_price)
             if db_type == "postgresql":
                 cursor.execute('''
-                    SELECT predicted_price, actual_price
+                    SELECT predicted_price, actual_price, prediction_method
                     FROM predictions p1
                     WHERE actual_price IS NOT NULL
                     AND predicted_price IS NOT NULL
                     AND prediction_date >= CURRENT_DATE - INTERVAL '30 days'
+                    AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
+                    AND ABS(predicted_price - actual_price) > 0.01
                     AND p1.created_at = (
                         SELECT MAX(p2.created_at)
                         FROM predictions p2
@@ -276,35 +332,40 @@ class PredictionRepository:
             else:
                 date_func_30 = get_date_function(-30)
                 cursor.execute(f'''
-                    SELECT predicted_price, actual_price
+                    SELECT predicted_price, actual_price, prediction_method
                     FROM predictions p1
                     WHERE actual_price IS NOT NULL
                     AND predicted_price IS NOT NULL
                     AND prediction_date >= {date_func_30}
+                    AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
+                    AND ABS(predicted_price - actual_price) > 0.01
                     AND p1.created_at = (
                         SELECT MAX(p2.created_at)
                         FROM predictions p2
                         WHERE p2.prediction_date = p1.prediction_date
                     )
                 ''')
-            
+
             price_data = cursor.fetchall()
-        
-        avg_accuracy = float(accuracy_result[0]) if accuracy_result[0] is not None else 0.0
-        evaluated_count = int(accuracy_result[1]) if accuracy_result[1] is not None else 0
-        total_count = int(total_result[0]) if total_result[0] is not None else 0
-        
-        # Calculate R² score
+
+            # Debug logging
+            logger.debug(
+                f"R² calculation: Found {len(price_data) if price_data else 0} model predictions (excluding manual entries)")
+
+        # avg_accuracy and evaluated_count are already calculated above (excluding weekends)
+
+        # Calculate R² score (only for model predictions, excluding manual entries)
         r2_score = None
         if price_data and len(price_data) > 1:
             try:
-                predicted_prices = np.array([float(row[0]) for row in price_data])
+                predicted_prices = np.array(
+                    [float(row[0]) for row in price_data])
                 actual_prices = np.array([float(row[1]) for row in price_data])
-                
+
                 # Calculate R² = 1 - (SS_res / SS_tot)
                 ss_res = np.sum((actual_prices - predicted_prices) ** 2)
                 ss_tot = np.sum((actual_prices - np.mean(actual_prices)) ** 2)
-                
+
                 if ss_tot > 0:
                     r2_score = 1 - (ss_res / ss_tot)
                     r2_score = round(float(r2_score), 4)
@@ -313,22 +374,22 @@ class PredictionRepository:
             except Exception as e:
                 logger.warning(f"Error calculating R² score: {e}")
                 r2_score = None
-        
+
         return {
             'average_accuracy': round(avg_accuracy, 2),
             'r2_score': r2_score if r2_score is not None else None,
             'total_predictions': total_count,
             'evaluated_predictions': evaluated_count
         }
-    
+
     @staticmethod
     def get_comprehensive_stats() -> Dict:
         """Get comprehensive prediction statistics (all time)"""
         db_type = get_db_type()
-        
+
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Get total unique predictions (all time)
             if db_type == "postgresql":
                 cursor.execute('''
@@ -350,10 +411,11 @@ class PredictionRepository:
                         WHERE p2.prediction_date = p1.prediction_date
                     )
                 ''')
-            
+
             total_result = cursor.fetchone()
-            total_count = int(total_result[0]) if total_result[0] is not None else 0
-            
+            total_count = int(
+                total_result[0]) if total_result[0] is not None else 0
+
             # Get evaluated predictions (those with actual_price)
             if db_type == "postgresql":
                 cursor.execute('''
@@ -377,18 +439,23 @@ class PredictionRepository:
                         WHERE p2.prediction_date = p1.prediction_date
                     )
                 ''')
-            
+
             evaluated_result = cursor.fetchone()
-            evaluated_count = int(evaluated_result[0]) if evaluated_result[0] is not None else 0
-            avg_accuracy = float(evaluated_result[1]) if evaluated_result[1] is not None else 0.0
-            
+            evaluated_count = int(
+                evaluated_result[0]) if evaluated_result[0] is not None else 0
+            avg_accuracy = float(
+                evaluated_result[1]) if evaluated_result[1] is not None else 0.0
+
             # Get predicted and actual prices for R² calculation (all time)
+            # Exclude manual entries to get accurate model performance
             if db_type == "postgresql":
                 cursor.execute('''
                     SELECT predicted_price, actual_price
                     FROM predictions p1
                     WHERE actual_price IS NOT NULL
                     AND predicted_price IS NOT NULL
+                    AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
+                    AND ABS(predicted_price - actual_price) > 0.01
                     AND p1.created_at = (
                         SELECT MAX(p2.created_at)
                         FROM predictions p2
@@ -401,29 +468,71 @@ class PredictionRepository:
                     FROM predictions p1
                     WHERE actual_price IS NOT NULL
                     AND predicted_price IS NOT NULL
+                    AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
+                    AND ABS(predicted_price - actual_price) > 0.01
                     AND p1.created_at = (
                         SELECT MAX(p2.created_at)
                         FROM predictions p2
                         WHERE p2.prediction_date = p1.prediction_date
                     )
                 ''')
-            
+
             price_data = cursor.fetchall()
-            
-            # Pending predictions are those without actual_price
-            pending_count = total_count - evaluated_count
-        
+
+            # Pending predictions are those without actual_price, excluding weekends
+            # Get all predictions without actual_price and filter out weekends
+            if db_type == "postgresql":
+                cursor.execute('''
+                    SELECT DISTINCT prediction_date
+                    FROM predictions p1
+                    WHERE actual_price IS NULL
+                    AND p1.created_at = (
+                        SELECT MAX(p2.created_at)
+                        FROM predictions p2
+                        WHERE p2.prediction_date = p1.prediction_date
+                    )
+                ''')
+            else:
+                cursor.execute('''
+                    SELECT DISTINCT prediction_date
+                    FROM predictions p1
+                    WHERE actual_price IS NULL
+                    AND p1.created_at = (
+                        SELECT MAX(p2.created_at)
+                        FROM predictions p2
+                        WHERE p2.prediction_date = p1.prediction_date
+                    )
+                ''')
+
+            pending_dates = cursor.fetchall()
+            # Filter out weekends
+            pending_count = 0
+            for row in pending_dates:
+                date_value = row[0]
+                if hasattr(date_value, 'weekday'):
+                    weekday = date_value.weekday()
+                elif isinstance(date_value, str):
+                    date_obj = datetime.strptime(date_value, '%Y-%m-%d')
+                    weekday = date_obj.weekday()
+                else:
+                    continue
+
+                # Only count weekdays (Monday=0 to Friday=4)
+                if weekday < 5:
+                    pending_count += 1
+
         # Calculate R² score
         r2_score = None
         if price_data and len(price_data) > 1:
             try:
-                predicted_prices = np.array([float(row[0]) for row in price_data])
+                predicted_prices = np.array(
+                    [float(row[0]) for row in price_data])
                 actual_prices = np.array([float(row[1]) for row in price_data])
-                
+
                 # Calculate R² = 1 - (SS_res / SS_tot)
                 ss_res = np.sum((actual_prices - predicted_prices) ** 2)
                 ss_tot = np.sum((actual_prices - np.mean(actual_prices)) ** 2)
-                
+
                 if ss_tot > 0:
                     r2_score = 1 - (ss_res / ss_tot)
                     r2_score = round(float(r2_score), 4)
@@ -432,7 +541,7 @@ class PredictionRepository:
             except Exception as e:
                 logger.warning(f"Error calculating R² score: {e}")
                 r2_score = None
-        
+
         return {
             'total_predictions': total_count,
             'evaluated_predictions': evaluated_count,
@@ -441,15 +550,15 @@ class PredictionRepository:
             'r2_score': r2_score,
             'evaluation_rate': round((evaluated_count / total_count * 100), 2) if total_count > 0 else 0.0
         }
-    
+
     @staticmethod
     def get_pending_predictions() -> List[Dict]:
         """Get all pending predictions (those without actual_price)"""
         db_type = get_db_type()
-        
+
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            
+
             if db_type == "postgresql":
                 cursor.execute('''
                     SELECT prediction_date, predicted_price, prediction_method
@@ -474,38 +583,50 @@ class PredictionRepository:
                     )
                     ORDER BY prediction_date ASC
                 ''')
-            
+
             results = cursor.fetchall()
-        
-        # Convert to list of dictionaries
+
+        # Convert to list of dictionaries and filter out weekends
         pending = []
         for row in results:
             date_value = row[0]
             if hasattr(date_value, 'strftime'):
                 date_str = date_value.strftime('%Y-%m-%d')
+                date_obj = date_value
             elif isinstance(date_value, str):
                 date_str = date_value
+                from datetime import datetime
+                date_obj = datetime.strptime(date_str, '%Y-%m-%d')
             else:
                 date_str = str(date_value)
-            
+                from datetime import datetime
+                try:
+                    date_obj = datetime.strptime(date_str, '%Y-%m-%d')
+                except:
+                    continue
+
+            # Skip weekends - don't include Saturday/Sunday in pending predictions
+            if date_obj.weekday() >= 5:  # Saturday (5) or Sunday (6)
+                continue
+
             pending.append({
                 'date': date_str,
                 'predicted_price': round(float(row[1]), 2) if row[1] is not None else None,
                 'method': row[2] if len(row) > 2 and row[2] else 'Lasso Regression'
             })
-        
+
         return pending
-    
+
     @staticmethod
     def update_prediction_with_actual_price(prediction_date: str, actual_price: float) -> bool:
         """Update a prediction with actual market price"""
         try:
             # Get the existing prediction to preserve predicted_price and method
             db_type = get_db_type()
-            
+
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                
+
                 # Get existing prediction data
                 if db_type == "postgresql":
                     cursor.execute('''
@@ -523,15 +644,18 @@ class PredictionRepository:
                         ORDER BY created_at DESC
                         LIMIT 1
                     ''', (prediction_date,))
-                
+
                 result = cursor.fetchone()
                 if not result:
-                    logger.warning(f"No prediction found for date {prediction_date}")
+                    logger.warning(
+                        f"No prediction found for date {prediction_date}")
                     return False
-                
-                predicted_price = float(result[0]) if result[0] is not None else None
-                prediction_method = result[1] if len(result) > 1 and result[1] else None
-                
+
+                predicted_price = float(
+                    result[0]) if result[0] is not None else None
+                prediction_method = result[1] if len(
+                    result) > 1 and result[1] else None
+
                 # Update with actual price using save_prediction (which calculates accuracy)
                 return PredictionRepository.save_prediction(
                     prediction_date=prediction_date,
@@ -540,7 +664,6 @@ class PredictionRepository:
                     prediction_method=prediction_method
                 )
         except Exception as e:
-            logger.error(f"Error updating prediction for {prediction_date}: {e}", exc_info=True)
+            logger.error(
+                f"Error updating prediction for {prediction_date}: {e}", exc_info=True)
             return False
-
-
