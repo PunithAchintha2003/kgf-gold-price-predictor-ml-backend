@@ -29,7 +29,7 @@ class MarketDataCache:
         
         # Clear cache if date changed (new day started)
         if self._last_cache_date is not None and self._last_cache_date != today:
-            logger.info(f"Date changed from {self._last_cache_date} to {today}, clearing cache")
+            logger.debug(f"Date changed from {self._last_cache_date} to {today}, clearing cache")
             self._market_data_cache = {}
             self._cache_timestamp = None
             self._realtime_cache = {}
@@ -70,13 +70,13 @@ class MarketDataCache:
                     
                     # Prefer spot gold symbols
                     if symbol in ["GC=F", "GOLD", "XAUUSD=X"] and current_price > 1000:
-                        logger.info(f"Using spot gold price from {symbol}: ${current_price:.2f}")
+                        logger.debug(f"Using spot gold price from {symbol}: ${current_price:.2f}")
                         self._market_data_cache = {'hist': hist, 'symbol': symbol}
                         self._cache_timestamp = now
                         self._last_cache_date = today
                         break
                     elif symbol in etf_symbols and current_price > 1000:
-                        logger.info(f"Using {symbol} price: ${current_price:.2f}")
+                        logger.debug(f"Using {symbol} price: ${current_price:.2f}")
                         self._market_data_cache = {'hist': hist, 'symbol': symbol}
                         self._cache_timestamp = now
                         self._last_cache_date = today

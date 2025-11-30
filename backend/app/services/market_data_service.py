@@ -12,19 +12,39 @@ from ..schemas.prediction import Prediction, AccuracyStats
 logger = logging.getLogger(__name__)
 
 
+def is_weekend(date: datetime) -> bool:
+    """Check if a date is Saturday (5) or Sunday (6)"""
+    return date.weekday() >= 5
+
+
+def get_next_trading_day(start_date: datetime = None) -> datetime:
+    """Get the next trading day (skip weekends)"""
+    if start_date is None:
+        start_date = datetime.now()
+
+    next_day = start_date + timedelta(days=1)
+    # Skip weekends - if it's Saturday, go to Monday; if Sunday, go to Monday
+    while is_weekend(next_day):
+        days_to_add = 7 - next_day.weekday()  # Days until Monday
+        next_day = next_day + timedelta(days=days_to_add)
+
+    return next_day
+
+
 class MarketDataService:
     """Service for market data operations"""
-    
+
     def __init__(self, prediction_service):
         self.prediction_repo = PredictionRepository()
         self.prediction_service = prediction_service
-    
+
     def get_daily_data(self, days: int = 90) -> Dict:
         """Get daily market data with predictions"""
         try:
             period = f"{max(days, 90)}d" if isinstance(days, int) else "3mo"
-            hist, symbol_used = market_data_cache.get_cached_market_data(period=period)
-            
+            hist, symbol_used = market_data_cache.get_cached_market_data(
+                period=period)
+
             if hist is None or hist.empty:
                 logger.error("All gold data sources failed")
                 return {
@@ -36,12 +56,13 @@ class MarketDataService:
                     "status": "error",
                     "message": "Unable to fetch gold price data"
                 }
-            
-            # Get or create prediction for next day
-            next_day = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+            # Get or create prediction for next trading day (skip weekends)
+            next_trading_day_dt = get_next_trading_day()
+            next_day = next_trading_day_dt.strftime("%Y-%m-%d")
             predicted_price = None
             prediction_method = None
-            
+
             try:
                 if not self.prediction_repo.prediction_exists_for_date(next_day):
                     predicted_price = self.prediction_service.predict_next_day()
@@ -50,15 +71,24 @@ class MarketDataService:
                         self.prediction_repo.save_prediction(
                             next_day, predicted_price, prediction_method=prediction_method
                         )
+                        logger.debug(
+                            f"Created prediction for next trading day: {next_day}")
                 else:
-                    predicted_price = self.prediction_repo.get_prediction_for_date(next_day)
+                    predicted_price = self.prediction_repo.get_prediction_for_date(
+                        next_day)
             except Exception as e:
                 logger.warning(f"Prediction check failed: {e}")
-            
+
             # Get historical predictions and accuracy stats
-            all_historical_predictions = self.prediction_repo.get_historical_predictions(days)
+            all_historical_predictions = self.prediction_repo.get_historical_predictions(
+                days)
+            # Filter out weekend predictions (Saturday/Sunday) - we don't want to show them
+            all_historical_predictions = [
+                p for p in all_historical_predictions
+                if not is_weekend(datetime.strptime(p['date'], "%Y-%m-%d"))
+            ]
             accuracy_stats = self.prediction_repo.get_accuracy_stats()
-            
+
             # Convert to daily data points
             daily_data = []
             data_dates = set()
@@ -73,25 +103,97 @@ class MarketDataService:
                     "close": round(float(row['Close']), 2),
                     "volume": int(row['Volume']) if not pd.isna(row['Volume']) else 0
                 })
-            
+
             # Add predictions to data points - ensure all data points have prediction fields
-            predictions_by_date = {p['date']: p for p in all_historical_predictions}
+            predictions_by_date = {
+                p['date']: p for p in all_historical_predictions}
             data_with_predictions = 0
             for data_point in daily_data:
                 date = data_point['date']
                 if date in predictions_by_date:
                     pred = predictions_by_date[date]
                     data_point['predicted_price'] = pred.get('predicted_price')
-                    data_point['actual_price'] = pred.get('actual_price')
+                    actual_price = pred.get('actual_price')
+                    data_point['actual_price'] = actual_price
+                    # Update close price with actual_price if available (manual entry takes precedence)
+                    if actual_price is not None:
+                        data_point['close'] = round(float(actual_price), 2)
+                        # Also update high/low/open if they're the same (likely manual entry)
+                        if data_point.get('high') == data_point.get('low') == data_point.get('open'):
+                            data_point['high'] = data_point['close']
+                            data_point['low'] = data_point['close']
+                            data_point['open'] = data_point['close']
                     if data_point.get('predicted_price') is not None:
                         data_with_predictions += 1
                 else:
                     # Ensure consistent structure - set to None if no prediction
                     data_point['predicted_price'] = None
                     data_point['actual_price'] = None
-            
+
+            # Add synthetic data points for predictions that have actual prices but aren't in market data
+            # BUT skip weekends - we don't want to show weekend data points
+            # Only show manual entries for weekdays that aren't in market data (holidays, etc.)
+            for pred_date, pred in predictions_by_date.items():
+                if pred_date not in data_dates and pred.get('actual_price') is not None:
+                    # Skip weekends - don't create synthetic data points for Saturday/Sunday
+                    try:
+                        pred_date_dt = datetime.strptime(pred_date, "%Y-%m-%d")
+                        if is_weekend(pred_date_dt):
+                            # Skip weekends - don't add synthetic data points for them
+                            logger.debug(
+                                f"Skipping weekend date {pred_date} from synthetic data points")
+                            continue
+                    except ValueError:
+                        # Invalid date format, skip
+                        logger.warning(
+                            f"Invalid date format in prediction: {pred_date}")
+                        continue
+
+                    # Create a synthetic data point for this date (only weekdays)
+                    actual_price = float(pred.get('actual_price'))
+                    synthetic_point = {
+                        "date": pred_date,
+                        "open": round(actual_price, 2),
+                        "high": round(actual_price, 2),
+                        "low": round(actual_price, 2),
+                        "close": round(actual_price, 2),
+                        "volume": 0,  # No volume for non-trading days
+                        "predicted_price": pred.get('predicted_price'),
+                        "actual_price": actual_price
+                    }
+                    daily_data.append(synthetic_point)
+                    data_dates.add(pred_date)
+                    if synthetic_point.get('predicted_price') is not None:
+                        data_with_predictions += 1
+
+            # Sort daily_data by date to maintain chronological order
+            daily_data.sort(key=lambda x: x['date'])
+
+            # Get current price - use last ACTUAL trading day's closing price (not weekend)
+            # Find the last trading day from the original market data (hist), not synthetic weekend points
+            # Market data from yfinance excludes weekends, so the last row is the last trading day
             current_price = round(float(hist['Close'].iloc[-1]), 2)
-            
+            last_trading_date = hist.index[-1].strftime("%Y-%m-%d")
+
+            # Verify we're not using a weekend - if the last market data point is somehow a weekend,
+            # find the last actual trading day
+            last_trading_day_dt = hist.index[-1]
+            if is_weekend(last_trading_day_dt):
+                # This shouldn't happen with yfinance data, but handle it just in case
+                # Go backwards through the market data to find the last weekday
+                for i in range(len(hist) - 1, -1, -1):
+                    if not is_weekend(hist.index[i]):
+                        current_price = round(float(hist['Close'].iloc[i]), 2)
+                        last_trading_date = hist.index[i].strftime("%Y-%m-%d")
+                        logger.debug(
+                            f"Found last trading day: {last_trading_date} (${current_price:.2f})")
+                        break
+
+            # Only log if it's a weekend (more informative)
+            if is_weekend(datetime.now()):
+                logger.debug(
+                    f"Using last trading day price ({last_trading_date}): ${current_price:.2f}")
+
             # Build prediction object
             prediction_obj = None
             if predicted_price:
@@ -101,29 +203,32 @@ class MarketDataService:
                     "current_price": current_price,
                     "prediction_method": prediction_method or "Lasso Regression"
                 }
-            
+
             # Calculate metadata for frontend
             if daily_data:
                 market_data_range = f"{daily_data[0]['date']} to {daily_data[-1]['date']}"
             else:
                 market_data_range = "N/A"
-            
+
             if all_historical_predictions:
                 prediction_range = f"{all_historical_predictions[0]['date']} to {all_historical_predictions[-1]['date']}"
             else:
                 prediction_range = "N/A"
-            
+
             # Calculate date ranges
             full_date_range = market_data_range
             if all_historical_predictions:
-                all_dates = [d['date'] for d in daily_data] + [p['date'] for p in all_historical_predictions]
+                all_dates = [d['date'] for d in daily_data] + \
+                    [p['date'] for p in all_historical_predictions]
                 if all_dates:
                     full_date_range = f"{min(all_dates)} to {max(all_dates)}"
-            
+
             # Count predictions before Oct 6, 2025
-            predictions_before_oct6 = len([p for p in all_historical_predictions if p['date'] < '2025-10-06'])
-            data_before_oct6 = len([d for d in daily_data if d['date'] < '2025-10-06'])
-            
+            predictions_before_oct6 = len(
+                [p for p in all_historical_predictions if p['date'] < '2025-10-06'])
+            data_before_oct6 = len(
+                [d for d in daily_data if d['date'] < '2025-10-06'])
+
             # Build metadata object
             metadata = {
                 "totalDataPoints": len(daily_data),
@@ -136,7 +241,7 @@ class MarketDataService:
                 "predictionRange": prediction_range,
                 "note": "Backend includes all available market data and predictions"
             }
-            
+
             return {
                 "symbol": "XAUUSD",
                 "timeframe": "daily",
@@ -153,7 +258,8 @@ class MarketDataService:
             logger.error(f"Error getting daily data: {e}", exc_info=True)
             # Return consistent structure even on error
             try:
-                all_historical_predictions = self.prediction_repo.get_historical_predictions(days)
+                all_historical_predictions = self.prediction_repo.get_historical_predictions(
+                    days)
                 accuracy_stats = self.prediction_repo.get_accuracy_stats()
             except:
                 all_historical_predictions = []
@@ -163,7 +269,7 @@ class MarketDataService:
                     'total_predictions': 0,
                     'evaluated_predictions': 0
                 }
-            
+
             # Empty metadata for error case
             metadata = {
                 "totalDataPoints": 0,
@@ -176,7 +282,7 @@ class MarketDataService:
                 "predictionRange": "N/A" if not all_historical_predictions else f"{all_historical_predictions[0]['date']} to {all_historical_predictions[-1]['date']}",
                 "note": "Error occurred while fetching data"
             }
-            
+
             return {
                 "symbol": "XAUUSD",
                 "timeframe": "daily",
@@ -190,9 +296,22 @@ class MarketDataService:
                 "status": "error",
                 "message": str(e)
             }
-    
+
     def get_realtime_price(self) -> Dict:
-        """Get real-time price data"""
+        """Get real-time price data - uses last trading day's closing price on weekends"""
+        # If today is a weekend, use last trading day's price from market data
+        if is_weekend(datetime.now()):
+            # Get daily data which already has the last trading day's price
+            daily_data = self.get_daily_data()
+            return {
+                "symbol": "XAUUSD",
+                "current_price": daily_data.get('current_price', 0.0),
+                "timestamp": datetime.now().isoformat(),
+                "status": "success",
+                "note": "Using last trading day's closing price (market closed on weekends)"
+            }
+
+        # On weekdays, try to get real-time data
         realtime_data = market_data_cache.get_realtime_price_data()
         if realtime_data:
             return {
@@ -202,7 +321,7 @@ class MarketDataService:
                 "status": "success"
             }
         else:
-            # Fallback to daily data
+            # Fallback to daily data (last trading day)
             daily_data = self.get_daily_data()
             return {
                 "symbol": "XAUUSD",
@@ -210,13 +329,13 @@ class MarketDataService:
                 "timestamp": datetime.now().isoformat(),
                 "status": "success"
             }
-    
+
     def update_pending_predictions(self) -> Dict:
         """Update pending predictions with actual market prices"""
         try:
             # Get all pending predictions
             pending = self.prediction_repo.get_pending_predictions()
-            
+
             if not pending:
                 return {
                     "status": "success",
@@ -224,16 +343,17 @@ class MarketDataService:
                     "updated_count": 0,
                     "failed_count": 0
                 }
-            
+
             # Fetch market data for a period that covers all pending predictions
             # Get the oldest pending prediction date
             oldest_date = min([p['date'] for p in pending])
             oldest_dt = datetime.strptime(oldest_date, "%Y-%m-%d")
             days_back = (datetime.now() - oldest_dt).days + 10  # Add buffer
-            
+
             period = f"{max(days_back, 90)}d"
-            hist, symbol_used = market_data_cache.get_cached_market_data(period=period)
-            
+            hist, symbol_used = market_data_cache.get_cached_market_data(
+                period=period)
+
             if hist is None or hist.empty:
                 return {
                     "status": "error",
@@ -241,41 +361,44 @@ class MarketDataService:
                     "updated_count": 0,
                     "failed_count": len(pending)
                 }
-            
+
             # Create a date-to-price mapping
             price_map = {}
             for date, row in hist.iterrows():
                 date_str = date.strftime("%Y-%m-%d")
                 price_map[date_str] = float(row['Close'])
-            
+
             # Update each pending prediction
             updated_count = 0
             failed_count = 0
             updated_dates = []
             failed_dates = []
             skipped_dates = []
-            
+
             # Get sorted list of available dates for finding nearest trading day
-            available_dates = sorted([datetime.strptime(d, "%Y-%m-%d") for d in price_map.keys()])
-            
+            available_dates = sorted(
+                [datetime.strptime(d, "%Y-%m-%d") for d in price_map.keys()])
+
             for pred in pending:
                 pred_date = pred['date']
                 pred_dt = datetime.strptime(pred_date, "%Y-%m-%d")
-                
+
                 if pred_date in price_map:
                     # Direct match - update with actual price
                     actual_price = price_map[pred_date]
                     if self.prediction_repo.update_prediction_with_actual_price(pred_date, actual_price):
                         updated_count += 1
                         updated_dates.append(pred_date)
-                        logger.info(f"Updated prediction for {pred_date} with actual price ${actual_price:.2f}")
+                        logger.debug(
+                            f"Updated prediction for {pred_date} with actual price ${actual_price:.2f}")
                     else:
                         failed_count += 1
                         failed_dates.append(pred_date)
                 elif pred_dt > datetime.now():
                     # Future date - can't have actual price yet
                     skipped_dates.append(pred_date)
-                    logger.info(f"Prediction date {pred_date} is in the future, skipping")
+                    logger.debug(
+                        f"Prediction date {pred_date} is in the future, skipping")
                 else:
                     # Date not in price_map - might be weekend/holiday
                     # Try to find the nearest previous trading day
@@ -283,25 +406,29 @@ class MarketDataService:
                     for available_dt in reversed(available_dates):
                         if available_dt <= pred_dt:
                             # Use the last trading day's price
-                            last_trading_date = available_dt.strftime("%Y-%m-%d")
+                            last_trading_date = available_dt.strftime(
+                                "%Y-%m-%d")
                             actual_price = price_map.get(last_trading_date)
                             if actual_price:
-                                logger.info(f"Using last trading day ({last_trading_date}) price for {pred_date} (likely weekend/holiday)")
+                                logger.debug(
+                                    f"Using last trading day ({last_trading_date}) price for {pred_date} (likely weekend/holiday)")
                                 break
-                    
+
                     if actual_price:
                         if self.prediction_repo.update_prediction_with_actual_price(pred_date, actual_price):
                             updated_count += 1
                             updated_dates.append(pred_date)
-                            logger.info(f"Updated prediction for {pred_date} with last trading day price ${actual_price:.2f}")
+                            logger.debug(
+                                f"Updated prediction for {pred_date} with last trading day price ${actual_price:.2f}")
                         else:
                             failed_count += 1
                             failed_dates.append(pred_date)
                     else:
                         failed_count += 1
                         failed_dates.append(pred_date)
-                        logger.warning(f"No market data found for date {pred_date} and no previous trading day available")
-            
+                        logger.warning(
+                            f"No market data found for date {pred_date} and no previous trading day available")
+
             return {
                 "status": "success",
                 "message": f"Updated {updated_count} predictions, {failed_count} failed, {len(skipped_dates)} skipped (future dates)",
@@ -314,13 +441,11 @@ class MarketDataService:
                 "total_pending": len(pending)
             }
         except Exception as e:
-            logger.error(f"Error updating pending predictions: {e}", exc_info=True)
+            logger.error(
+                f"Error updating pending predictions: {e}", exc_info=True)
             return {
                 "status": "error",
                 "message": str(e),
                 "updated_count": 0,
                 "failed_count": 0
             }
-
-
-

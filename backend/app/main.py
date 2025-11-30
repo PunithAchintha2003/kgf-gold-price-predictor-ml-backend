@@ -1,14 +1,17 @@
 """
 Main application entry point - Refactored to use modular structure
 """
+from models.lasso_model import LassoGoldPredictor
+from models.news_prediction import NewsEnhancedLassoPredictor
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from pydantic import BaseModel
+from typing import List, Dict
 import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import List
 from pathlib import Path
 import sys
 
@@ -42,8 +45,6 @@ if str(BACKEND_PARENT) not in sys.path:
     sys.path.insert(0, str(BACKEND_PARENT))
 
 # Import models after path is set
-from models.news_prediction import NewsEnhancedLassoPredictor
-from models.lasso_model import LassoGoldPredictor
 
 # Setup logging
 setup_logging()
@@ -57,9 +58,9 @@ lasso_predictor = LassoGoldPredictor()
 try:
     lasso_predictor.load_model(
         str(BACKEND_DIR / 'models/lasso_gold_model.pkl'))
-    logger.info("Lasso Regression model loaded successfully")
+    logger.debug("Lasso Regression model loaded")
 except Exception as e:
-    logger.warning(f"Lasso Regression model not found: {e}")
+    logger.warning(f"Lasso model not found: {e}")
     lasso_predictor = None
 
 # Initialize News-Enhanced Lasso predictor
@@ -69,13 +70,12 @@ enhanced_model_path = BACKEND_DIR / 'models/enhanced_lasso_gold_model.pkl'
 if enhanced_model_path.exists():
     try:
         news_enhanced_predictor.load_enhanced_model(str(enhanced_model_path))
-        logger.info("News-enhanced Lasso model loaded successfully")
+        logger.debug("News-enhanced model loaded")
     except Exception as e:
-        logger.warning(f"News-enhanced model found but failed to load: {e}")
+        logger.warning(f"News-enhanced model failed to load: {e}")
         news_enhanced_predictor = None
 else:
-    logger.info(
-        "News-enhanced Lasso model not found - using regular Lasso model")
+    logger.debug("Using regular Lasso model (enhanced model not found)")
 
 # Initialize services
 prediction_service = PredictionService(
@@ -90,10 +90,9 @@ prediction_repo = PredictionRepository()
 # Initialize database
 if settings.use_postgresql:
     if init_postgresql_pool():
-        logger.info("✅ PostgreSQL enabled - using PostgreSQL database")
+        logger.debug("PostgreSQL database connected")
     else:
-        logger.warning(
-            "⚠️  PostgreSQL initialization failed - falling back to SQLite")
+        logger.warning("PostgreSQL failed - using SQLite")
         settings.use_postgresql = False
 
 init_database()
@@ -128,14 +127,14 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-        logger.info(
-            f"Client connected. Total connections: {len(self.active_connections)}")
+        logger.debug(
+            f"WebSocket client connected ({len(self.active_connections)} total)")
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-        logger.info(
-            f"Client disconnected. Total connections: {len(self.active_connections)}")
+        logger.debug(
+            f"WebSocket client disconnected ({len(self.active_connections)} total)")
 
     async def send_personal_message(self, message: str, websocket: WebSocket):
         await websocket.send_text(message)
@@ -204,6 +203,58 @@ async def get_daily_data(days: int = 90):
 async def get_realtime_price():
     """Get real-time XAU/USD price"""
     return market_data_service.get_realtime_price()
+
+
+@app.get("/xauusd/enhanced-prediction")
+async def get_enhanced_prediction():
+    """Get enhanced prediction with news sentiment analysis"""
+    try:
+        # Get current price
+        current_price_data = market_data_service.get_realtime_price()
+        current_price = current_price_data.get('current_price', 0.0)
+
+        # Try to get enhanced prediction
+        predicted_price = prediction_service.predict_next_day()
+
+        if predicted_price is None:
+            return {
+                "status": "error",
+                "message": "Unable to generate prediction",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Calculate change
+        change = predicted_price - current_price
+        change_percentage = (change / current_price *
+                             100) if current_price > 0 else 0
+
+        # Get method name
+        method = prediction_service.get_model_display_name()
+
+        return {
+            "status": "success",
+            "prediction": {
+                "next_day_price": round(predicted_price, 2),
+                "current_price": round(current_price, 2),
+                "change": round(change, 2),
+                "change_percentage": round(change_percentage, 2),
+                "method": method
+            },
+            "sentiment": {
+                "combined_sentiment": 0.0,  # Placeholder - would need news analyzer
+                "news_volume": 0,
+                "sentiment_trend": 0.0
+            },
+            "top_features": [],  # Placeholder
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting enhanced prediction: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @app.get("/xauusd/accuracy-visualization")
@@ -287,6 +338,66 @@ async def update_pending_predictions():
         }
 
 
+class PriceUpdateItem(BaseModel):
+    """Price update item"""
+    date: str
+    actual_price: float
+
+
+class PriceUpdateRequest(BaseModel):
+    """Price update request"""
+    prices: List[PriceUpdateItem]
+
+
+@app.post("/xauusd/update-actual-prices")
+async def update_actual_prices(request: PriceUpdateRequest):
+    """Manually update actual prices for specific dates"""
+    try:
+        updated_count = 0
+        failed_count = 0
+        updated_dates = []
+        failed_dates = []
+
+        for price_item in request.prices:
+            date = price_item.date
+            actual_price = price_item.actual_price
+
+            # Validate date format
+            try:
+                datetime.strptime(date, "%Y-%m-%d")
+            except ValueError:
+                failed_count += 1
+                failed_dates.append(
+                    {"date": date, "error": "Invalid date format. Use YYYY-MM-DD"})
+                continue
+
+            # Update the prediction
+            if prediction_repo.update_prediction_with_actual_price(date, actual_price):
+                updated_count += 1
+                updated_dates.append(date)
+                logger.info(
+                    f"Updated actual price for {date}: ${actual_price:.2f}")
+            else:
+                failed_count += 1
+                failed_dates.append(
+                    {"date": date, "error": "No prediction found for this date"})
+
+        return {
+            "status": "success",
+            "message": f"Updated {updated_count} prices, {failed_count} failed",
+            "updated_count": updated_count,
+            "failed_count": failed_count,
+            "updated_dates": updated_dates,
+            "failed_dates": failed_dates
+        }
+    except Exception as e:
+        logger.error(f"Error updating actual prices: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
 @app.get("/xauusd/prediction-history")
 async def get_prediction_history(days: int = 30):
     """Get historical predictions"""
@@ -307,7 +418,7 @@ async def get_prediction_history(days: int = 30):
 
 @app.get("/exchange-rate/{from_currency}/{to_currency}")
 async def get_exchange_rate(from_currency: str, to_currency: str):
-    """Get exchange rate between currencies"""
+    """Get exchange rate between currencies - supports both naming conventions"""
     return exchange_service.get_exchange_rate(from_currency, to_currency)
 
 
@@ -346,15 +457,15 @@ async def broadcast_daily_data():
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup"""
-    logger.info(f"Starting application in {settings.environment} environment")
+    logger.info(f"🚀 Server starting in {settings.environment} mode")
     asyncio.create_task(broadcast_daily_data())
-    logger.info("✅ All background tasks started successfully")
+    logger.info("✅ Ready - API available at http://localhost:8001")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
-    logger.info("Application shutdown")
+    logger.info("🛑 Server shutting down")
 
 
 if __name__ == "__main__":
