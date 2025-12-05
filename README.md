@@ -1,37 +1,51 @@
 # KGF Gold Price Predictor - ML Backend
 
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org)
+<div align="center">
+
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104.1-green.svg)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Status](https://img.shields.io/badge/status-active-success.svg)](https://github.com)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com)
 
-> Production-ready FastAPI backend for XAU/USD (Gold) price prediction using machine learning models with news sentiment analysis.
+**Production-ready FastAPI backend for XAU/USD (Gold) price prediction using machine learning models with news sentiment analysis.**
+
+[Features](#-features) • [Quick Start](#-quick-start) • [Documentation](#-api-documentation) • [Deployment](#-deployment) • [Contributing](#-contributing)
+
+</div>
+
+---
 
 ## 📋 Table of Contents
 
-- [Overview](#overview)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [API Documentation](#api-documentation)
-- [Usage Examples](#usage-examples)
-- [Machine Learning Models](#machine-learning-models)
-- [Project Structure](#project-structure)
-- [Deployment](#deployment)
-- [Development](#development)
-- [Testing](#testing)
-- [Troubleshooting](#troubleshooting)
-- [Performance](#performance)
-- [Security](#security)
-- [Contributing](#contributing)
-- [License](#license)
-- [Support](#support)
+- [Overview](#-overview)
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Quick Start](#-quick-start)
+- [Installation](#-installation)
+- [Configuration](#-configuration)
+- [API Documentation](#-api-documentation)
+- [Usage Examples](#-usage-examples)
+- [Machine Learning Models](#-machine-learning-models)
+- [Project Structure](#-project-structure)
+- [Deployment](#-deployment)
+- [Development](#-development)
+- [Testing](#-testing)
+- [Monitoring & Observability](#-monitoring--observability)
+- [Performance](#-performance)
+- [Security](#-security)
+- [Troubleshooting](#-troubleshooting)
+- [Roadmap](#-roadmap)
+- [Contributing](#-contributing)
+- [License](#-license)
+- [Support](#-support)
+
+---
 
 ## 📖 Overview
 
-KGF Gold Price Predictor is a production-ready machine learning backend that provides accurate next-day gold price predictions using advanced ML models and real-time market data analysis. The system combines technical indicators with news sentiment analysis to deliver predictions with 96%+ accuracy.
+**KGF Gold Price Predictor** is a production-ready machine learning backend that provides accurate next-day gold price predictions using advanced ML models and real-time market data analysis. The system combines technical indicators with news sentiment analysis to deliver predictions with **96%+ accuracy**.
 
 ### Key Capabilities
 
@@ -40,6 +54,16 @@ KGF Gold Price Predictor is a production-ready machine learning backend that pro
 - **Sentiment Analysis**: Multi-source news sentiment integration
 - **RESTful API**: Comprehensive API with 18+ endpoints
 - **Production Ready**: Optimized for scalability and reliability
+
+### Use Cases
+
+- Financial analysis and research
+- Trading decision support systems
+- Market trend analysis
+- Educational ML projects
+- Portfolio management tools
+
+---
 
 ## ✨ Features
 
@@ -56,13 +80,18 @@ KGF Gold Price Predictor is a production-ready machine learning backend that pro
 
 ### Technical Features
 
-- Modular architecture following industry best practices
-- Comprehensive logging and monitoring
-- Automated database migrations
-- Connection pooling for PostgreSQL
-- Intelligent caching with TTL
-- Background task processing
-- Health check endpoints
+- ✅ Modular architecture following industry best practices
+- ✅ Comprehensive logging and monitoring
+- ✅ Automated database migrations
+- ✅ Connection pooling for PostgreSQL
+- ✅ Intelligent caching with TTL
+- ✅ Background task processing
+- ✅ Health check endpoints
+- ✅ API rate limiting and cooldown
+- ✅ Request/response validation with Pydantic
+- ✅ Graceful error handling
+
+---
 
 ## 🏗️ Architecture
 
@@ -77,6 +106,9 @@ KGF Gold Price Predictor is a production-ready machine learning backend that pro
 │         FastAPI Backend                      │
 │  ┌──────────────────────────────────────┐   │
 │  │  API Layer (REST + WebSocket)        │   │
+│  │  - /api/v1/xauusd                    │   │
+│  │  - /api/v1/health                     │   │
+│  │  - /ws/xauusd                        │   │
 │  └──────────────┬───────────────────────┘   │
 │                 │                            │
 │  ┌──────────────▼───────────────────────┐   │
@@ -111,6 +143,18 @@ KGF Gold Price Predictor is a production-ready machine learning backend that pro
 └─────────────────┘  └──────────────┘
 ```
 
+### Technology Stack
+
+- **Framework**: FastAPI 0.104.1
+- **Python**: 3.11+
+- **ML Library**: scikit-learn
+- **Database**: PostgreSQL 12+ / SQLite
+- **Market Data**: yfinance
+- **Async**: asyncio, WebSocket
+- **Validation**: Pydantic
+
+---
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -135,7 +179,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # Configure environment variables
-# Create .env file with your database and API settings (see Configuration section below)
+# Create .env file with your database and API settings (see Configuration section)
 
 # Start the server
 python run_backend.py
@@ -146,6 +190,8 @@ The API will be available at:
 - **Interactive Docs**: http://localhost:8001/docs
 - **Alternative Docs**: http://localhost:8001/redoc
 - **WebSocket**: ws://localhost:8001/ws/xauusd
+
+---
 
 ## 📦 Installation
 
@@ -202,6 +248,10 @@ ALPHA_VANTAGE_KEY=your_alpha_vantage_key
 CACHE_DURATION=300
 API_COOLDOWN=2
 REALTIME_CACHE_DURATION=60
+
+# Background Tasks
+AUTO_UPDATE_ENABLED=true
+AUTO_UPDATE_INTERVAL=3600
 ```
 
 #### 5. Initialize Database
@@ -219,6 +269,8 @@ createdb gold_predictor
 ```bash
 python run_backend.py
 ```
+
+---
 
 ## ⚙️ Configuration
 
@@ -239,6 +291,10 @@ python run_backend.py
 | `CACHE_DURATION` | Market data cache TTL (seconds) | `300` | No |
 | `API_COOLDOWN` | API request cooldown (seconds) | `2` | No |
 | `REALTIME_CACHE_DURATION` | Real-time data cache TTL (seconds) | `60` | No |
+| `AUTO_UPDATE_ENABLED` | Enable automatic prediction updates | `true` | No |
+| `AUTO_UPDATE_INTERVAL` | Update interval in seconds | `3600` | No |
+| `CORS_ORIGINS` | Comma-separated list of allowed origins | `*` (dev) | No |
+| `PORT` | Server port | `8001` | No |
 
 *Required if `USE_POSTGRESQL=true`
 
@@ -279,6 +335,8 @@ USE_POSTGRESQL=false python run_backend.py
 
 SQLite database will be created automatically at `backend/data/gold_predictions.db`.
 
+---
+
 ## 📚 API Documentation
 
 ### Base URL
@@ -292,33 +350,40 @@ http://localhost:8001
 - **Swagger UI**: http://localhost:8001/docs
 - **ReDoc**: http://localhost:8001/redoc
 
-### Core Endpoints
+### API Endpoints
 
 #### Health & Status
 
 | Endpoint | Method | Description | Response |
 |----------|--------|-------------|----------|
-| `/` | GET | API root and status | `{"status": "active"}` |
+| `/` | GET | API root and status | `{"message": "...", "status": "running"}` |
 | `/health` | GET | Health check endpoint | Health status JSON |
+| `/api/v1/health` | GET | Health check (v1) | Detailed health status |
 
 #### Market Data
 
 | Endpoint | Method | Description | Query Params |
 |----------|--------|-------------|-------------|
-| `/xauusd` | GET | Daily data with predictions | `?days=90` (default: 90) |
-| `/xauusd/realtime` | GET | Real-time price data | - |
-| `/xauusd/news-sentiment` | GET | News sentiment analysis | - |
-| `/xauusd/enhanced-prediction` | GET | ML prediction with sentiment | - |
-| `/xauusd/compare-models` | GET | Model comparison results | - |
+| `/api/v1/xauusd` | GET | Daily data with predictions | `?days=90` (default: 90) |
+| `/api/v1/xauusd/realtime` | GET | Real-time price data | - |
+| `/api/v1/xauusd/enhanced-prediction` | GET | ML prediction with sentiment | - |
+| `/api/v1/xauusd/prediction-stats` | GET | Comprehensive prediction statistics | - |
+| `/api/v1/xauusd/prediction-history` | GET | Historical predictions | `?days=30` |
+| `/api/v1/xauusd/pending-predictions` | GET | Pending predictions list | - |
+| `/api/v1/xauusd/accuracy-visualization` | GET | Accuracy statistics for visualization | - |
 
 #### Data Management
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/backup` | POST | Create database backup |
-| `/restore` | POST | Restore from backup |
-| `/backup/status` | GET | Backup status information |
-| `/performance` | GET | Performance statistics |
+| Endpoint | Method | Description | Body |
+|----------|--------|-------------|------|
+| `/api/v1/xauusd/update-pending-predictions` | POST | Update pending predictions | - |
+| `/api/v1/xauusd/update-actual-prices` | POST | Manually update actual prices | `PriceUpdateRequest` |
+
+#### Exchange Rates
+
+| Endpoint | Method | Description | Path Params |
+|----------|--------|-------------|-------------|
+| `/api/v1/exchange/{from_currency}/{to_currency}` | GET | Get exchange rate | `from_currency`, `to_currency` |
 
 #### WebSocket
 
@@ -331,7 +396,7 @@ http://localhost:8001
 #### Get Daily Data
 
 ```bash
-curl http://localhost:8001/xauusd?days=30
+curl http://localhost:8001/api/v1/xauusd?days=30
 ```
 
 **Response:**
@@ -370,7 +435,7 @@ curl http://localhost:8001/xauusd?days=30
 #### Get Real-time Price
 
 ```bash
-curl http://localhost:8001/xauusd/realtime
+curl http://localhost:8001/api/v1/xauusd/realtime
 ```
 
 **Response:**
@@ -382,6 +447,34 @@ curl http://localhost:8001/xauusd/realtime
   "status": "success"
 }
 ```
+
+#### Get Enhanced Prediction
+
+```bash
+curl http://localhost:8001/api/v1/xauusd/enhanced-prediction
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "prediction": {
+    "next_day_price": 4135.16,
+    "current_price": 4184.4,
+    "change": -49.24,
+    "change_percentage": -1.18,
+    "method": "Lasso Regression"
+  },
+  "sentiment": {
+    "combined_sentiment": 0.15,
+    "news_volume": 42,
+    "sentiment_trend": 0.05
+  },
+  "timestamp": "2025-11-26T12:00:00"
+}
+```
+
+---
 
 ## 💻 Usage Examples
 
@@ -395,7 +488,7 @@ import json
 BASE_URL = "http://localhost:8001"
 
 # Get daily data with predictions
-response = requests.get(f"{BASE_URL}/xauusd?days=90")
+response = requests.get(f"{BASE_URL}/api/v1/xauusd?days=90")
 data = response.json()
 
 print(f"Current Price: ${data['current_price']:.2f}")
@@ -403,9 +496,15 @@ print(f"Predicted Price: ${data['prediction']['predicted_price']:.2f}")
 print(f"Accuracy: {data['accuracy_stats']['average_accuracy']:.2f}%")
 
 # Get real-time price
-response = requests.get(f"{BASE_URL}/xauusd/realtime")
+response = requests.get(f"{BASE_URL}/api/v1/xauusd/realtime")
 realtime = response.json()
 print(f"Real-time Price: ${realtime['current_price']:.2f}")
+
+# Get enhanced prediction
+response = requests.get(f"{BASE_URL}/api/v1/xauusd/enhanced-prediction")
+prediction = response.json()
+print(f"Next Day Prediction: ${prediction['prediction']['next_day_price']:.2f}")
+print(f"Sentiment: {prediction['sentiment']['combined_sentiment']:.2f}")
 ```
 
 ### JavaScript/TypeScript
@@ -413,7 +512,7 @@ print(f"Real-time Price: ${realtime['current_price']:.2f}")
 ```javascript
 // Fetch daily data
 async function getGoldData() {
-  const response = await fetch('http://localhost:8001/xauusd?days=90');
+  const response = await fetch('http://localhost:8001/api/v1/xauusd?days=90');
   const data = await response.json();
   
   console.log('Current Price:', data.current_price);
@@ -447,13 +546,16 @@ ws.onclose = () => {
 curl http://localhost:8001/health
 
 # Get daily data
-curl http://localhost:8001/xauusd?days=30
+curl http://localhost:8001/api/v1/xauusd?days=30
 
 # Get real-time price
-curl http://localhost:8001/xauusd/realtime
+curl http://localhost:8001/api/v1/xauusd/realtime
 
 # Get enhanced prediction
-curl http://localhost:8001/xauusd/enhanced-prediction
+curl http://localhost:8001/api/v1/xauusd/enhanced-prediction
+
+# Get prediction statistics
+curl http://localhost:8001/api/v1/xauusd/prediction-stats
 ```
 
 ### WebSocket Client (Python)
@@ -470,9 +572,12 @@ async def listen_to_prices():
             data = await websocket.recv()
             price_data = json.loads(data)
             print(f"Price: ${price_data['current_price']:.2f}")
+            print(f"Prediction: ${price_data.get('prediction', {}).get('predicted_price', 'N/A')}")
 
 asyncio.run(listen_to_prices())
 ```
+
+---
 
 ## 🤖 Machine Learning Models
 
@@ -519,6 +624,8 @@ asyncio.run(listen_to_prices())
 - Domain-specific keyword extraction
 - Temporal sentiment aggregation
 
+---
+
 ## 🏗️ Project Structure
 
 ```
@@ -530,17 +637,23 @@ kgf-gold-price-predictor-ml-backend/
 │   │   ├── api/
 │   │   │   └── v1/
 │   │   │       └── routes/
-│   │   │           ├── health.py  # Health check endpoints
-│   │   │           ├── xauusd.py  # Gold price endpoints
+│   │   │           ├── health.py   # Health check endpoints
+│   │   │           ├── xauusd.py   # Gold price endpoints
 │   │   │           └── exchange.py # Exchange rate endpoints
 │   │   ├── core/
 │   │   │   ├── config.py           # Application configuration
 │   │   │   ├── database.py         # Database connection & setup
-│   │   │   └── logging_config.py   # Logging configuration
+│   │   │   ├── logging_config.py   # Logging configuration
+│   │   │   ├── dependencies.py     # Dependency injection
+│   │   │   ├── exceptions.py       # Custom exceptions
+│   │   │   ├── middleware.py       # Custom middleware
+│   │   │   ├── metrics.py          # Performance metrics
+│   │   │   ├── task_manager.py     # Background task management
+│   │   │   └── websocket.py        # WebSocket connection manager
 │   │   ├── services/
 │   │   │   ├── prediction_service.py    # Prediction business logic
-│   │   │   ├── market_data_service.py    # Market data operations
-│   │   │   └── exchange_service.py       # Exchange rate operations
+│   │   │   ├── market_data_service.py   # Market data operations
+│   │   │   └── exchange_service.py      # Exchange rate operations
 │   │   ├── repositories/
 │   │   │   └── prediction_repository.py # Database access layer
 │   │   ├── schemas/
@@ -549,7 +662,7 @@ kgf-gold-price-predictor-ml-backend/
 │   │   │   └── exchange.py         # Exchange rate schemas
 │   │   └── utils/
 │   │       ├── cache.py            # Caching utilities
-│   │       └── yfinance_helper.py  # Market data fetching
+│   │       └── yfinance_helper.py # Market data fetching
 │   ├── config/
 │   │   ├── news_config.py          # News API configuration
 │   │   └── __init__.py
@@ -557,20 +670,22 @@ kgf-gold-price-predictor-ml-backend/
 │   │   ├── lasso_model.py          # Lasso regression model
 │   │   ├── news_prediction.py      # News-enhanced model
 │   │   └── lasso_gold_model.pkl    # Trained model file
-│   ├── data/                       # Database files (SQLite)
-│   │   ├── gold_predictions.db
-│   │   └── gold_predictions_backup.db
-│   ├── REFACTORING_GUIDE.md        # Architecture documentation
-│   └── STRUCTURE.md                # Project structure guide
-├── .env                            # Environment variables (not in git, create manually)
+│   └── data/                       # Database files (SQLite)
+│       ├── gold_predictions.db
+│       └── gold_predictions_backup.db
+├── .env                            # Environment variables (not in git)
+├── .gitignore                      # Git ignore rules
 ├── requirements.txt                # Python dependencies
 ├── run_backend.py                  # Application startup script
+├── train_enhanced_model.py         # Model training script
 ├── Procfile                        # Process configuration (Render)
 ├── render.yaml                     # Render deployment config
 ├── runtime.txt                     # Python version specification
 ├── LICENSE                         # MIT License
 └── README.md                       # This file
 ```
+
+---
 
 ## 🌐 Deployment
 
@@ -611,7 +726,23 @@ Use the included `render.yaml` for automated deployment:
 New + → Blueprint → Connect Repository → Apply
 ```
 
-### Docker Deployment (Coming Soon)
+### Docker Deployment
+
+```dockerfile
+# Dockerfile (example)
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8001
+
+CMD ["python", "run_backend.py"]
+```
 
 ```bash
 # Build image
@@ -634,6 +765,7 @@ POSTGRESQL_PASSWORD=your_secure_password
 POSTGRESQL_PORT=5432
 NEWS_API_KEY=your_news_api_key
 ALPHA_VANTAGE_KEY=your_alpha_vantage_key
+CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 ```
 
 ### Free Tier Limitations
@@ -647,6 +779,8 @@ ALPHA_VANTAGE_KEY=your_alpha_vantage_key
 - Create a free PostgreSQL database on Render
 - Configure connection via environment variables
 - Automatic fallback to SQLite if unavailable
+
+---
 
 ## 🛠️ Development
 
@@ -665,7 +799,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Install development tools (optional)
-pip install black flake8 pytest pytest-cov
+pip install black flake8 pytest pytest-cov mypy
 
 # Run in development mode
 ENVIRONMENT=development LOG_LEVEL=DEBUG python run_backend.py
@@ -676,7 +810,14 @@ ENVIRONMENT=development LOG_LEVEL=DEBUG python run_backend.py
 This project follows PEP 8 style guidelines. Use `black` for formatting:
 
 ```bash
+# Format code
 black backend/
+
+# Check code style
+flake8 backend/
+
+# Type checking
+mypy backend/
 ```
 
 ### Project Architecture
@@ -689,7 +830,15 @@ The backend follows a modular architecture:
 - **Core Layer**: Configuration, database, and logging setup
 - **Models Layer**: ML models and prediction logic
 
-See `backend/STRUCTURE.md` and `backend/REFACTORING_GUIDE.md` for detailed architecture documentation.
+### Development Workflow
+
+1. Create a feature branch
+2. Make your changes
+3. Run tests and linting
+4. Update documentation
+5. Submit a pull request
+
+---
 
 ## 🧪 Testing
 
@@ -697,7 +846,7 @@ See `backend/STRUCTURE.md` and `backend/REFACTORING_GUIDE.md` for detailed archi
 
 ```bash
 # Install test dependencies
-pip install pytest pytest-cov
+pip install pytest pytest-cov pytest-asyncio
 
 # Run all tests
 pytest
@@ -707,6 +856,9 @@ pytest --cov=backend --cov-report=html
 
 # Run specific test file
 pytest tests/test_api.py
+
+# Run with verbose output
+pytest -v
 ```
 
 ### Test Structure
@@ -718,6 +870,128 @@ tests/
 ├── test_services.py      # Service layer tests
 └── test_repositories.py  # Repository tests
 ```
+
+### Writing Tests
+
+```python
+import pytest
+from fastapi.testclient import TestClient
+from backend.app.main import app
+
+client = TestClient(app)
+
+def test_health_endpoint():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "healthy"
+```
+
+---
+
+## 📊 Monitoring & Observability
+
+### Health Checks
+
+The application provides comprehensive health check endpoints:
+
+- `/health` - Basic health check
+- `/api/v1/health` - Detailed health status with:
+  - Database connectivity
+  - Background task status
+  - Model loading status
+  - System metrics
+
+### Logging
+
+The application uses structured logging with configurable levels:
+
+```python
+# Log levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_LEVEL=INFO
+```
+
+### Metrics
+
+Performance metrics are tracked and available via:
+- Response times
+- Cache hit rates
+- Database query performance
+- Background task execution times
+
+### Monitoring Best Practices
+
+1. Set up log aggregation (e.g., Loggly, Datadog)
+2. Monitor API response times
+3. Track prediction accuracy over time
+4. Monitor database connection pool usage
+5. Set up alerts for errors and performance degradation
+
+---
+
+## 📊 Performance
+
+### Benchmarks
+
+- **Average Accuracy**: 96.16%
+- **API Response Time**: < 100ms (cached), < 2s (uncached)
+- **WebSocket Update Frequency**: 10 seconds
+- **Cache Hit Rate**: ~85%
+- **Concurrent Connections**: Tested up to 1000+
+
+### Optimization Features
+
+- **Intelligent Caching**: 5-minute TTL for market data
+- **Connection Pooling**: PostgreSQL connection pooling
+- **Background Tasks**: Non-blocking prediction generation
+- **Lazy Loading**: Models loaded on first use
+- **Request Cooldown**: Prevents API rate limiting
+- **Async Operations**: Non-blocking I/O operations
+
+### Performance Tips
+
+1. Use caching for frequently accessed data
+2. Enable connection pooling for PostgreSQL
+3. Monitor cache hit rates
+4. Optimize database queries
+5. Use background tasks for heavy computations
+
+---
+
+## 🔒 Security
+
+### Security Best Practices
+
+1. **Environment Variables**: Never commit `.env` files
+2. **API Keys**: Store securely in environment variables
+3. **Database Credentials**: Use strong passwords
+4. **Input Validation**: All inputs validated via Pydantic schemas
+5. **Error Handling**: No sensitive data in error messages
+6. **CORS**: Configured for specific origins in production
+7. **HTTPS**: Always use HTTPS in production
+8. **Rate Limiting**: Implement rate limiting for API endpoints
+
+### Production Checklist
+
+- [ ] Change default passwords
+- [ ] Use HTTPS in production
+- [ ] Configure CORS for specific domains
+- [ ] Enable rate limiting
+- [ ] Set up monitoring and alerts
+- [ ] Regular security updates
+- [ ] Database backups enabled
+- [ ] API keys rotated regularly
+- [ ] Log sensitive operations
+- [ ] Review and update dependencies
+
+### Security Headers
+
+The application includes security headers:
+- CORS configuration
+- Request size limits
+- Input validation
+- SQL injection prevention (via parameterized queries)
+
+---
 
 ## 🔧 Troubleshooting
 
@@ -757,7 +1031,7 @@ tests/
 # Find and kill process on port 8001
 lsof -ti:8001 | xargs kill -9
 
-# Or change port in .env
+# Or change port
 PORT=8002 python run_backend.py
 ```
 
@@ -793,50 +1067,48 @@ python -c "import sys; print(sys.path)"
 3. Check API rate limits
 4. Review cache settings in `.env`
 
+#### WebSocket Connection Issues
+
+**Problem**: WebSocket connection fails
+
+**Solutions:**
+1. Verify server is running
+2. Check CORS configuration
+3. Ensure WebSocket endpoint is correct: `ws://localhost:8001/ws/xauusd`
+4. Check firewall settings
+
 ### Getting Help
 
 - **Documentation**: Check `/docs` endpoint when server is running
 - **Issues**: Open an issue on GitHub
 - **Email**: Punithachintha@gmail.com
 
-## 📊 Performance
+---
 
-### Benchmarks
+## 🗺️ Roadmap
 
-- **Average Accuracy**: 96.16%
-- **API Response Time**: < 100ms (cached), < 2s (uncached)
-- **WebSocket Update Frequency**: 10 seconds
-- **Cache Hit Rate**: ~85%
-- **Concurrent Connections**: Tested up to 1000+
+### Planned Features
 
-### Optimization Features
+- [ ] Docker containerization
+- [ ] Kubernetes deployment manifests
+- [ ] Additional ML models (Random Forest, XGBoost)
+- [ ] Real-time alerting system
+- [ ] Advanced analytics dashboard
+- [ ] Multi-currency support
+- [ ] Historical backtesting
+- [ ] Model versioning system
+- [ ] A/B testing framework
+- [ ] GraphQL API support
 
-- **Intelligent Caching**: 5-minute TTL for market data
-- **Connection Pooling**: PostgreSQL connection pooling
-- **Background Tasks**: Non-blocking prediction generation
-- **Lazy Loading**: Models loaded on first use
-- **Request Cooldown**: Prevents API rate limiting
+### Version History
 
-## 🔒 Security
+- **v1.0.0** (Current): Initial release with Lasso Regression model
+  - Basic prediction functionality
+  - News sentiment analysis
+  - WebSocket support
+  - PostgreSQL/SQLite support
 
-### Security Best Practices
-
-1. **Environment Variables**: Never commit `.env` files
-2. **API Keys**: Store securely in environment variables
-3. **Database Credentials**: Use strong passwords
-4. **Input Validation**: All inputs validated via Pydantic schemas
-5. **Error Handling**: No sensitive data in error messages
-6. **CORS**: Configured for specific origins in production
-
-### Production Checklist
-
-- [ ] Change default passwords
-- [ ] Use HTTPS in production
-- [ ] Configure CORS for specific domains
-- [ ] Enable rate limiting
-- [ ] Set up monitoring and alerts
-- [ ] Regular security updates
-- [ ] Database backups enabled
+---
 
 ## 🤝 Contributing
 
@@ -868,10 +1140,22 @@ We welcome contributions! Please follow these steps:
 - Update documentation
 - Follow existing code style
 - Ensure all tests pass
+- Update CHANGELOG.md if applicable
+
+### Code of Conduct
+
+- Be respectful and inclusive
+- Provide constructive feedback
+- Follow the project's coding standards
+- Test your changes thoroughly
+
+---
 
 ## 📝 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
 
 ## ⚠️ Disclaimer
 
@@ -879,25 +1163,31 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 AI predictions should not be considered financial advice. Always consult qualified financial professionals before making investment decisions. The authors and contributors are not responsible for any financial losses resulting from the use of this software.
 
+---
+
 ## 🙏 Acknowledgments
 
 - **Yahoo Finance** for market data
 - **FastAPI** community for excellent documentation
 - **scikit-learn** contributors for ML tools
 - **PostgreSQL** team for robust database solution
+- All contributors and users of this project
+
+---
 
 ## 📞 Support
 
 - **Documentation**: Available at `/docs` when server is running
 - **Issues**: [GitHub Issues](https://github.com/yourusername/kgf-gold-price-predictor-ml-backend/issues)
 - **Email**: Punithachintha@gmail.com
-
-## 📈 Project Status
-
-![Status](https://img.shields.io/badge/status-active-success.svg)
-![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+- **Discussions**: [GitHub Discussions](https://github.com/yourusername/kgf-gold-price-predictor-ml-backend/discussions)
 
 ---
 
+<div align="center">
+
 **Made with ❤️ for the financial technology community**
+
+[⬆ Back to Top](#kgf-gold-price-predictor---ml-backend)
+
+</div>
