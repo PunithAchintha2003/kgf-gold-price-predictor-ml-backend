@@ -10,6 +10,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import re
+import warnings
+# Suppress SyntaxWarnings from textblob library
+warnings.filterwarnings('ignore', category=SyntaxWarning, module='textblob')
 from textblob import TextBlob
 import yfinance as yf
 from sklearn.feature_extraction.text import TfidfVectorizer
