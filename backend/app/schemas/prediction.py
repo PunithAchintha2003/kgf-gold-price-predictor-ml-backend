@@ -36,3 +36,14 @@ class AccuracyStats(BaseModel):
     r2_score: float
     total_predictions: int
     evaluated_predictions: int
+
+
+class PriceUpdateItem(BaseModel):
+    """Price update item"""
+    date: str
+    actual_price: float
+
+
+class PriceUpdateRequest(BaseModel):
+    """Price update request"""
+    prices: list[PriceUpdateItem]
