@@ -3,9 +3,15 @@
 Startup script for the FastAPI backend server
 """
 import warnings
-# Suppress SyntaxWarnings from third-party libraries (e.g., textblob)
-# These warnings appear during import and don't affect functionality
-warnings.filterwarnings('ignore', category=SyntaxWarning, module='textblob')
+import sys
+# Suppress ALL SyntaxWarnings globally before any imports
+# This catches warnings from third-party libraries like textblob
+warnings.filterwarnings('ignore', category=SyntaxWarning)
+
+# Also suppress via sys.warnoptions for early suppression
+if not sys.warnoptions:
+    import warnings
+    warnings.simplefilter("ignore", SyntaxWarning)
 
 import uvicorn
 import sys
