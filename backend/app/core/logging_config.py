@@ -5,8 +5,14 @@ from .config import settings
 
 def setup_logging():
     """Setup application logging"""
+    import warnings
+
     log_level = getattr(logging, settings.log_level.upper(), logging.WARNING)
-    
+
+    # Suppress SyntaxWarnings from third-party libraries (e.g., textblob)
+    warnings.filterwarnings(
+        'ignore', category=SyntaxWarning, module='textblob')
+
     # More user-friendly log format - cleaner and less verbose
     if log_level >= logging.INFO:
         # For INFO and above, use simple format (no timestamps)
@@ -16,18 +22,18 @@ def setup_logging():
         # For DEBUG, include more details
         log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         datefmt = '%H:%M:%S'
-    
+
     logging.basicConfig(
         level=log_level,
         format=log_format,
         datefmt=datefmt
     )
-    
+
     # Suppress verbose uvicorn access logs (HTTP requests)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     # Suppress uvicorn startup/shutdown messages (we'll show our own)
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
-    
+
     logger = logging.getLogger(__name__)
     # Only log startup message at INFO level or below
     if log_level <= logging.INFO:
