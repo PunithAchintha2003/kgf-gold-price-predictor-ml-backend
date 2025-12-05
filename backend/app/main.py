@@ -1,6 +1,11 @@
 """
 Main application entry point - Optimized and modular structure
 """
+import warnings
+# Suppress SyntaxWarnings from third-party libraries (e.g., textblob)
+# These warnings appear during import and don't affect functionality
+warnings.filterwarnings('ignore', category=SyntaxWarning, module='textblob')
+
 import asyncio
 import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
