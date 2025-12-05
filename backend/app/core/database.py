@@ -84,18 +84,86 @@ def get_date_function(days_offset: int = 0) -> str:
             return f"date('now', '{days_offset:+d} days')"
 
 
+def _is_connection_alive(conn) -> bool:
+    """Check if a PostgreSQL connection is still alive"""
+    if not conn or not POSTGRESQL_AVAILABLE:
+        return False
+    try:
+        # Try to execute a simple query to check if connection is alive
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+        cursor.close()
+        return True
+    except Exception as e:
+        # Check for PostgreSQL-specific errors
+        if POSTGRESQL_AVAILABLE:
+            if isinstance(e, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+                return False
+        # Other exceptions might indicate connection issues
+        if isinstance(e, AttributeError):
+            return False
+        # For other exceptions, assume connection might be alive but query failed
+        # Log for debugging
+        logger.debug(f"Connection health check exception: {e}")
+        return False
+
+
 @contextmanager
-def get_db_connection(db_path: Optional[str] = None):
-    """Context manager for database connections - Supports PostgreSQL and SQLite"""
+def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3):
+    """Context manager for database connections - Supports PostgreSQL and SQLite
+
+    Args:
+        db_path: Optional path for SQLite database
+        max_retries: Maximum number of retries for PostgreSQL connections
+    """
     conn = None
     use_postgresql = settings.use_postgresql and POSTGRESQL_AVAILABLE and _postgresql_pool is not None
 
     try:
         if use_postgresql:
-            # Use PostgreSQL
-            conn = _postgresql_pool.getconn()
-            if conn:
-                yield conn
+            # Use PostgreSQL with retry logic
+            for attempt in range(max_retries):
+                try:
+                    conn = _postgresql_pool.getconn()
+                    if conn:
+                        # Check if connection is alive before using it
+                        if not _is_connection_alive(conn):
+                            logger.warning(
+                                f"Connection from pool is dead, attempt {attempt + 1}/{max_retries}")
+                            try:
+                                conn.close()
+                            except:
+                                pass
+                            conn = None
+                            if attempt < max_retries - 1:
+                                continue
+                            else:
+                                raise Exception(
+                                    "Failed to get a valid connection from pool after retries")
+                        yield conn
+                        break
+                    else:
+                        if attempt < max_retries - 1:
+                            logger.warning(
+                                f"Failed to get connection from pool, attempt {attempt + 1}/{max_retries}")
+                            continue
+                        else:
+                            raise Exception(
+                                "Failed to get connection from pool")
+                except Exception as e:
+                    if attempt < max_retries - 1:
+                        logger.warning(
+                            f"Error getting connection (attempt {attempt + 1}/{max_retries}): {e}")
+                        if conn:
+                            try:
+                                conn.close()
+                            except:
+                                pass
+                            conn = None
+                        continue
+                    else:
+                        raise
         else:
             # Fallback to SQLite
             if db_path is None:
@@ -111,13 +179,25 @@ def get_db_connection(db_path: Optional[str] = None):
                 conn.rollback()
             except:
                 pass
+        # Log the error for debugging
+        logger.debug(f"Database connection error: {e}", exc_info=True)
         raise e
     finally:
         if conn:
             if use_postgresql:
                 try:
-                    # Return connection to pool (don't close it)
-                    _postgresql_pool.putconn(conn)
+                    # Check if connection is still alive before returning to pool
+                    if _is_connection_alive(conn):
+                        # Return connection to pool (don't close it)
+                        _postgresql_pool.putconn(conn)
+                    else:
+                        # Connection is dead, close it instead of returning to pool
+                        logger.warning(
+                            "Connection is dead, closing instead of returning to pool")
+                        try:
+                            conn.close()
+                        except:
+                            pass
                 except Exception as e:
                     logger.error(f"Error returning connection to pool: {e}")
                     # If pool is full or connection is bad, close it
@@ -206,6 +286,39 @@ def init_database():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+
+        # Create indexes for better query performance
+        try:
+            if db_type == "postgresql":
+                # Create indexes for frequently queried columns
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_predictions_date 
+                    ON predictions(prediction_date);
+                ''')
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_predictions_created_at 
+                    ON predictions(created_at);
+                ''')
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_predictions_date_created 
+                    ON predictions(prediction_date, created_at);
+                ''')
+                logger.debug("PostgreSQL indexes created/verified")
+            else:
+                # SQLite indexes
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_predictions_date 
+                    ON predictions(prediction_date);
+                ''')
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_predictions_created_at 
+                    ON predictions(created_at);
+                ''')
+                logger.debug("SQLite indexes created/verified")
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"Could not create indexes: {e}")
+            conn.rollback()
 
         conn.commit()
         logger.info(f"Database initialized successfully: {db_type.upper()}")

@@ -36,6 +36,3 @@ class AccuracyStats(BaseModel):
     r2_score: float
     total_predictions: int
     evaluated_predictions: int
-
-
-

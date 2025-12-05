@@ -40,19 +40,30 @@ class MarketDataCache:
             (now - self._cache_timestamp).total_seconds() > settings.cache_duration or
             not self._market_data_cache):
             
-            # Rate limiting: wait if we made a call recently
+            # Rate limiting: wait if we made a call recently (but don't block for too long)
             current_time = time.time()
-            if current_time - self._last_api_call < settings.api_cooldown:
-                time.sleep(settings.api_cooldown - (current_time - self._last_api_call))
+            wait_time = settings.api_cooldown - (current_time - self._last_api_call)
+            if wait_time > 0:
+                # Only wait if it's a short wait, otherwise return cached data if available
+                if wait_time <= 1.0:  # Only wait up to 1 second
+                    time.sleep(wait_time)
+                else:
+                    # If we need to wait too long, return cached data if available
+                    if self._market_data_cache:
+                        logger.debug("Rate limit active, returning cached data")
+                        return self._market_data_cache.get('hist'), self._market_data_cache.get('symbol')
             
-            # Try multiple symbols for better reliability
-            symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+            # Try multiple symbols for better reliability (prioritize faster ones)
+            # Start with most reliable symbols first to reduce API calls
+            symbols_to_try = ["GC=F", "XAUUSD=X", "GOLD"]  # Reduced list for speed
             hist = None
             
             for symbol in symbols_to_try:
                 try:
                     self._last_api_call = time.time()
                     gold = create_yf_ticker(symbol)
+                    # Fetch data - yfinance handles timeouts internally
+                    # Use shorter period for faster response
                     hist = gold.history(period=period, interval="1d")
                     
                     if hist.empty:
@@ -62,29 +73,16 @@ class MarketDataCache:
                     # Validate that we're getting a reasonable gold price
                     current_price = float(hist['Close'].iloc[-1])
                     
-                    # Skip ETFs if they're giving prices too low for spot gold
-                    etf_symbols = ["GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
-                    if symbol in etf_symbols and current_price < 1000:
-                        logger.warning(f"Skipping {symbol} ETF price: ${current_price:.2f} - too low for spot gold")
-                        continue
-                    
-                    # Prefer spot gold symbols
+                    # Prefer spot gold symbols - accept first valid one to speed up
                     if symbol in ["GC=F", "GOLD", "XAUUSD=X"] and current_price > 1000:
                         logger.debug(f"Using spot gold price from {symbol}: ${current_price:.2f}")
                         self._market_data_cache = {'hist': hist, 'symbol': symbol}
                         self._cache_timestamp = now
                         self._last_cache_date = today
-                        break
-                    elif symbol in etf_symbols and current_price > 1000:
-                        logger.debug(f"Using {symbol} price: ${current_price:.2f}")
-                        self._market_data_cache = {'hist': hist, 'symbol': symbol}
-                        self._cache_timestamp = now
-                        self._last_cache_date = today
-                        break
+                        break  # Found valid data, stop trying other symbols
                 except Exception as e:
-                    logger.error(f"Error fetching {symbol}: {type(e).__name__}: {e}")
-                    if symbol == symbols_to_try[-1]:
-                        logger.error(f"All {len(symbols_to_try)} gold data sources failed")
+                    logger.warning(f"Error fetching {symbol}: {type(e).__name__}: {e}")
+                    # Continue to next symbol instead of failing immediately
                     continue
             
             if hist is None or hist.empty:
@@ -101,17 +99,25 @@ class MarketDataCache:
             not self._realtime_cache):
             
             try:
-                # Rate limiting
+                # Rate limiting (non-blocking for long waits)
                 current_time = time.time()
-                if current_time - self._last_api_call < settings.api_cooldown:
-                    time.sleep(settings.api_cooldown - (current_time - self._last_api_call))
+                wait_time = settings.api_cooldown - (current_time - self._last_api_call)
+                if wait_time > 0:
+                    if wait_time <= 1.0:  # Only wait up to 1 second
+                        time.sleep(wait_time)
+                    else:
+                        # Return cached data if available instead of waiting
+                        if self._realtime_cache:
+                            logger.debug("Rate limit active, returning cached realtime data")
+                            return self._realtime_cache
                 
-                symbols_to_try = ["GC=F", "GOLD", "XAUUSD=X", "GLD", "IAU", "SGOL", "OUNZ", "AAAU"]
+                symbols_to_try = ["GC=F", "XAUUSD=X", "GOLD"]  # Reduced for speed
                 
                 for symbol in symbols_to_try:
                     try:
                         self._last_api_call = time.time()
                         gold = create_yf_ticker(symbol)
+                        # Use shorter period for faster response
                         if symbol == "GC=F":
                             hist = gold.history(period="5d", interval="1d")
                         else:
@@ -158,6 +164,3 @@ class MarketDataCache:
 
 # Global cache instance
 market_data_cache = MarketDataCache()
-
-
-

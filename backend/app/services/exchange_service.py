@@ -48,6 +48,3 @@ class ExchangeService:
                 "status": "error",
                 "message": str(e)
             }
-
-
-
