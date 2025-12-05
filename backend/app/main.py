@@ -1,23 +1,11 @@
 """
 Main application entry point - Refactored to use modular structure
 """
-from models.lasso_model import LassoGoldPredictor
-from models.news_prediction import NewsEnhancedLassoPredictor
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
-from pydantic import BaseModel
-from typing import List, Dict
-import asyncio
-import json
-import logging
-from datetime import datetime, timedelta
-from pathlib import Path
-import sys
-
-# Core imports
-from .core.config import settings
-from .core.logging_config import setup_logging, get_logger
+from .utils.cache import market_data_cache
+from .repositories.prediction_repository import PredictionRepository
+from .services.exchange_service import ExchangeService
+from .services.market_data_service import MarketDataService
+from .services.prediction_service import PredictionService
 from .core.database import (
     get_db_connection,
     get_db_type,
@@ -26,17 +14,21 @@ from .core.database import (
     init_backup_database,
     init_postgresql_pool
 )
-
-# Services
-from .services.prediction_service import PredictionService
-from .services.market_data_service import MarketDataService
-from .services.exchange_service import ExchangeService
-
-# Repositories
-from .repositories.prediction_repository import PredictionRepository
-
-# Utils
-from .utils.cache import market_data_cache
+from .core.logging_config import setup_logging, get_logger
+from .core.config import settings
+from datetime import datetime, timedelta
+import logging
+import json
+import asyncio
+from typing import List, Dict
+from pydantic import BaseModel
+from fastapi.responses import Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from models.news_prediction import NewsEnhancedLassoPredictor
+from models.lasso_model import LassoGoldPredictor
+from pathlib import Path
+import sys
 
 # ML Models - import from parent backend directory
 # Add backend directory to path before importing models
@@ -45,6 +37,15 @@ if str(BACKEND_PARENT) not in sys.path:
     sys.path.insert(0, str(BACKEND_PARENT))
 
 # Import models after path is set
+
+
+# Core imports
+
+# Services
+
+# Repositories
+
+# Utils
 
 # Setup logging
 setup_logging()
@@ -153,16 +154,38 @@ manager = ConnectionManager()
 # API Endpoints
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """
+    Comprehensive health check endpoint (Industry Standard)
+    Includes service status, configuration, and background task health
+    """
+    # Get task health status
+    tasks_health = task_manager.get_all_tasks_health()
+
+    # Determine overall health status
+    overall_status = "healthy"
+    unhealthy_tasks = [
+        name for name, health in tasks_health.items()
+        if health.get("status") == "error"
+    ]
+
+    if unhealthy_tasks:
+        overall_status = "degraded"
+
     return {
-        "status": "healthy",
+        "status": overall_status,
         "timestamp": datetime.now().isoformat(),
         "service": "XAU/USD Real-time Data API",
         "version": "1.0.0",
         "environment": settings.environment,
         "log_level": settings.log_level,
         "cache_duration": settings.cache_duration,
-        "api_cooldown": settings.api_cooldown
+        "api_cooldown": settings.api_cooldown,
+        "background_tasks": {
+            "auto_update_enabled": settings.auto_update_enabled,
+            "auto_update_interval": settings.auto_update_interval,
+            "tasks": tasks_health
+        },
+        "unhealthy_tasks": unhealthy_tasks if unhealthy_tasks else None
     }
 
 
@@ -441,24 +464,275 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
+# Background Task Manager (Industry Standard Implementation)
+class BackgroundTaskManager:
+    """
+    Industry-standard background task manager with:
+    - Task lifecycle management
+    - Graceful shutdown support
+    - Error handling with retries
+    - Health tracking
+    """
+
+    def __init__(self):
+        self.tasks: Dict[str, asyncio.Task] = {}
+        self.task_states: Dict[str, Dict] = {}
+        self.shutdown_event = asyncio.Event()
+
+    def register_task(self, name: str, task: asyncio.Task):
+        """Register a background task"""
+        self.tasks[name] = task
+        self.task_states[name] = {
+            "status": "running",
+            "last_run": None,
+            "last_error": None,
+            "run_count": 0,
+            "error_count": 0
+        }
+
+    def get_task_health(self, name: str) -> Dict:
+        """Get health status of a task"""
+        return self.task_states.get(name, {"status": "unknown"})
+
+    def get_all_tasks_health(self) -> Dict:
+        """Get health status of all tasks"""
+        return {
+            name: self.get_task_health(name)
+            for name in self.tasks.keys()
+        }
+
+    async def shutdown(self):
+        """Gracefully shutdown all background tasks"""
+        logger.info("🛑 Shutting down background tasks...")
+        self.shutdown_event.set()
+
+        # Cancel all tasks
+        for name, task in self.tasks.items():
+            if not task.done():
+                logger.debug(f"Cancelling task: {name}")
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    logger.debug(f"Task {name} cancelled successfully")
+
+        logger.info("✅ All background tasks shut down")
+
+
+# Global task manager instance
+task_manager = BackgroundTaskManager()
+
+
 # Background tasks
 async def broadcast_daily_data():
     """Background task to broadcast daily data to all connected clients"""
+    task_name = "broadcast_daily_data"
     last_broadcast_data = None
-    while True:
-        if manager.active_connections:
-            daily_data = market_data_service.get_daily_data()
-            if daily_data != last_broadcast_data:
-                await manager.broadcast(json.dumps(daily_data))
-                last_broadcast_data = daily_data
-        await asyncio.sleep(5)
+
+    while not task_manager.shutdown_event.is_set():
+        try:
+            if manager.active_connections:
+                daily_data = market_data_service.get_daily_data()
+                if daily_data != last_broadcast_data:
+                    await manager.broadcast(json.dumps(daily_data))
+                    last_broadcast_data = daily_data
+
+            # Wait with cancellation support
+            try:
+                await asyncio.wait_for(
+                    task_manager.shutdown_event.wait(),
+                    timeout=5.0
+                )
+                break  # Shutdown requested
+            except asyncio.TimeoutError:
+                continue  # Continue loop
+        except asyncio.CancelledError:
+            logger.debug(f"Task {task_name} cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in {task_name}: {e}", exc_info=True)
+            await asyncio.sleep(5)  # Brief pause before retry
+
+
+async def auto_update_pending_predictions():
+    """
+    Industry-standard background task to automatically update pending predictions.
+
+    Features:
+    - Configurable intervals via settings
+    - Error handling with retries
+    - Circuit breaker pattern
+    - Health tracking
+    - Graceful shutdown
+    """
+    task_name = "auto_update_pending_predictions"
+
+    # Check if auto-update is enabled
+    if not settings.auto_update_enabled:
+        logger.info("🔄 Auto-update task is disabled via configuration")
+        return
+
+    # Wait for startup delay (configurable)
+    try:
+        await asyncio.wait_for(
+            task_manager.shutdown_event.wait(),
+            timeout=float(settings.auto_update_startup_delay)
+        )
+        return  # Shutdown requested during startup delay
+    except asyncio.TimeoutError:
+        pass  # Continue after delay
+
+    consecutive_failures = 0
+    max_consecutive_failures = 5  # Circuit breaker threshold
+
+    while not task_manager.shutdown_event.is_set():
+        try:
+            # Initialize/update task state
+            if task_name not in task_manager.task_states:
+                task_manager.task_states[task_name] = {
+                    "status": "running",
+                    "last_run": None,
+                    "last_error": None,
+                    "run_count": 0,
+                    "error_count": 0
+                }
+            state = task_manager.task_states[task_name]
+            state["status"] = "running"
+            state["last_run"] = datetime.now().isoformat()
+
+            # Check for pending predictions
+            pending = prediction_repo.get_pending_predictions()
+
+            if pending:
+                logger.info(
+                    f"🔄 Auto-updating {len(pending)} pending prediction(s)...")
+
+                # Retry logic with exponential backoff
+                result = None
+                retry_count = 0
+
+                while retry_count < settings.auto_update_max_retries:
+                    try:
+                        result = market_data_service.update_pending_predictions()
+
+                        if result.get('status') == 'success':
+                            consecutive_failures = 0  # Reset circuit breaker
+                            break
+                        else:
+                            retry_count += 1
+                            if retry_count < settings.auto_update_max_retries:
+                                wait_time = settings.auto_update_retry_delay * retry_count
+                                logger.warning(
+                                    f"⚠️ Update failed, retrying in {wait_time}s (attempt {retry_count + 1}/{settings.auto_update_max_retries})")
+                                await asyncio.sleep(wait_time)
+                    except Exception as retry_error:
+                        retry_count += 1
+                        logger.error(
+                            f"❌ Error during update attempt {retry_count}: {retry_error}",
+                            exc_info=True)
+                        if retry_count < settings.auto_update_max_retries:
+                            wait_time = settings.auto_update_retry_delay * retry_count
+                            await asyncio.sleep(wait_time)
+
+                # Process results
+                if result and result.get('status') == 'success':
+                    updated = result.get('updated_count', 0)
+                    failed = result.get('failed_count', 0)
+                    skipped = result.get('skipped_count', 0)
+
+                    state["run_count"] = state.get("run_count", 0) + 1
+
+                    if updated > 0:
+                        logger.info(
+                            f"✅ Auto-updated {updated} prediction(s) with actual prices")
+                    if failed > 0:
+                        logger.warning(
+                            f"⚠️ Failed to update {failed} prediction(s)")
+                        state["error_count"] = state.get(
+                            "error_count", 0) + failed
+                    if skipped > 0:
+                        logger.debug(
+                            f"⏭️ Skipped {skipped} future prediction(s)")
+                else:
+                    consecutive_failures += 1
+                    state["error_count"] = state.get("error_count", 0) + 1
+                    state["last_error"] = result.get(
+                        'message', 'Unknown error') if result else 'Max retries exceeded'
+
+                    if consecutive_failures >= max_consecutive_failures:
+                        logger.error(
+                            f"❌ Circuit breaker triggered: {consecutive_failures} consecutive failures. "
+                            f"Pausing updates for {settings.auto_update_interval * 2} seconds.")
+                        # Extended wait before retrying
+                        try:
+                            await asyncio.wait_for(
+                                task_manager.shutdown_event.wait(),
+                                timeout=float(
+                                    settings.auto_update_interval * 2)
+                            )
+                            break
+                        except asyncio.TimeoutError:
+                            consecutive_failures = 0  # Reset after extended wait
+                            continue
+                    else:
+                        logger.warning(
+                            f"⚠️ Auto-update failed: {state['last_error']}")
+            else:
+                logger.debug("No pending predictions to update")
+                state["run_count"] = state.get("run_count", 0) + 1
+
+            # Update task state
+            state["status"] = "idle"
+
+        except asyncio.CancelledError:
+            logger.debug(f"Task {task_name} cancelled")
+            break
+        except Exception as e:
+            consecutive_failures += 1
+            if task_name not in task_manager.task_states:
+                task_manager.task_states[task_name] = {
+                    "status": "error",
+                    "last_run": None,
+                    "last_error": None,
+                    "run_count": 0,
+                    "error_count": 0
+                }
+            state = task_manager.task_states[task_name]
+            state["error_count"] = state.get("error_count", 0) + 1
+            state["last_error"] = str(e)
+            state["status"] = "error"
+            logger.error(
+                f"❌ Error in auto-update task: {e}", exc_info=True)
+
+        # Wait for next interval (with cancellation support)
+        try:
+            await asyncio.wait_for(
+                task_manager.shutdown_event.wait(),
+                timeout=float(settings.auto_update_interval)
+            )
+            break  # Shutdown requested
+        except asyncio.TimeoutError:
+            continue  # Continue loop
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup"""
     logger.info(f"🚀 Server starting in {settings.environment} mode")
-    asyncio.create_task(broadcast_daily_data())
+
+    # Start background tasks with proper registration
+    broadcast_task = asyncio.create_task(broadcast_daily_data())
+    task_manager.register_task("broadcast_daily_data", broadcast_task)
+
+    if settings.auto_update_enabled:
+        update_task = asyncio.create_task(auto_update_pending_predictions())
+        task_manager.register_task(
+            "auto_update_pending_predictions", update_task)
+        logger.info(
+            f"🔄 Auto-update task started: pending predictions will be updated every {settings.auto_update_interval}s")
+    else:
+        logger.info("🔄 Auto-update task is disabled via configuration")
+
     logger.info("✅ Ready - API available at http://localhost:8001")
 
 
@@ -466,6 +740,7 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on shutdown"""
     logger.info("🛑 Server shutting down")
+    await task_manager.shutdown()
 
 
 if __name__ == "__main__":

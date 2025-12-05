@@ -154,28 +154,31 @@ class PredictionRepository:
             cursor = conn.cursor()
 
             if db_type == "postgresql":
+                # Optimized query using window function instead of correlated subquery
                 cursor.execute('''
                     SELECT prediction_date, predicted_price, actual_price, prediction_method
-                    FROM predictions p1
-                    WHERE prediction_date >= CURRENT_DATE - INTERVAL %s
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    FROM (
+                        SELECT prediction_date, predicted_price, actual_price, prediction_method,
+                               ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                        FROM predictions
+                        WHERE prediction_date >= CURRENT_DATE - INTERVAL %s
+                    ) ranked
+                    WHERE rn = 1
                     ORDER BY prediction_date ASC
                 ''', (f'{days} days',))
             else:
+                # SQLite optimized using JOIN
                 cursor.execute(f'''
-                    SELECT prediction_date, predicted_price, actual_price, prediction_method
+                    SELECT p1.prediction_date, p1.predicted_price, p1.actual_price, p1.prediction_method
                     FROM predictions p1
-                    WHERE prediction_date >= {date_func}
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
-                    ORDER BY prediction_date ASC
+                    INNER JOIN (
+                        SELECT prediction_date, MAX(created_at) as max_created_at
+                        FROM predictions
+                        WHERE prediction_date >= {date_func}
+                        GROUP BY prediction_date
+                    ) p2 ON p1.prediction_date = p2.prediction_date 
+                        AND p1.created_at = p2.max_created_at
+                    ORDER BY p1.prediction_date ASC
                 ''')
 
             results = cursor.fetchall()
@@ -223,29 +226,32 @@ class PredictionRepository:
 
             # Get accuracy for unique predictions with actual prices (excluding weekends)
             if db_type == "postgresql":
+                # Optimized query using window function
                 cursor.execute('''
                     SELECT prediction_date, accuracy_percentage
-                    FROM predictions p1
-                    WHERE accuracy_percentage IS NOT NULL
-                    AND prediction_date >= CURRENT_DATE - INTERVAL '30 days'
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    FROM (
+                        SELECT prediction_date, accuracy_percentage,
+                               ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                        FROM predictions
+                        WHERE accuracy_percentage IS NOT NULL
+                        AND prediction_date >= CURRENT_DATE - INTERVAL '30 days'
+                    ) ranked
+                    WHERE rn = 1
                 ''')
             else:
+                # SQLite optimized using JOIN
                 date_func_30 = get_date_function(-30)
                 cursor.execute(f'''
-                    SELECT prediction_date, accuracy_percentage
+                    SELECT p1.prediction_date, p1.accuracy_percentage
                     FROM predictions p1
-                    WHERE accuracy_percentage IS NOT NULL
-                    AND prediction_date >= {date_func_30}
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    INNER JOIN (
+                        SELECT prediction_date, MAX(created_at) as max_created_at
+                        FROM predictions
+                        WHERE accuracy_percentage IS NOT NULL
+                        AND prediction_date >= {date_func_30}
+                        GROUP BY prediction_date
+                    ) p2 ON p1.prediction_date = p2.prediction_date 
+                        AND p1.created_at = p2.max_created_at
                 ''')
 
             accuracy_results = cursor.fetchall()
@@ -272,27 +278,30 @@ class PredictionRepository:
 
             # Get total unique prediction dates (excluding weekends)
             if db_type == "postgresql":
+                # Optimized query using window function
                 cursor.execute('''
                     SELECT DISTINCT prediction_date
-                    FROM predictions p1
-                    WHERE prediction_date >= CURRENT_DATE - INTERVAL '30 days'
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    FROM (
+                        SELECT prediction_date,
+                               ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                        FROM predictions
+                        WHERE prediction_date >= CURRENT_DATE - INTERVAL '30 days'
+                    ) ranked
+                    WHERE rn = 1
                 ''')
             else:
+                # SQLite optimized using JOIN
                 date_func_30 = get_date_function(-30)
                 cursor.execute(f'''
-                    SELECT DISTINCT prediction_date
+                    SELECT DISTINCT p1.prediction_date
                     FROM predictions p1
-                    WHERE prediction_date >= {date_func_30}
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    INNER JOIN (
+                        SELECT prediction_date, MAX(created_at) as max_created_at
+                        FROM predictions
+                        WHERE prediction_date >= {date_func_30}
+                        GROUP BY prediction_date
+                    ) p2 ON p1.prediction_date = p2.prediction_date 
+                        AND p1.created_at = p2.max_created_at
                 ''')
 
             total_dates = cursor.fetchall()
@@ -315,35 +324,38 @@ class PredictionRepository:
             # Get predicted and actual prices for R² calculation
             # Exclude manual entries (where prediction_method = 'Manual Entry' or predicted_price = actual_price)
             if db_type == "postgresql":
+                # Optimized query using window function
                 cursor.execute('''
                     SELECT predicted_price, actual_price, prediction_method
-                    FROM predictions p1
-                    WHERE actual_price IS NOT NULL
-                    AND predicted_price IS NOT NULL
-                    AND prediction_date >= CURRENT_DATE - INTERVAL '30 days'
-                    AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
-                    AND ABS(predicted_price - actual_price) > 0.01
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    FROM (
+                        SELECT predicted_price, actual_price, prediction_method,
+                               ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                        FROM predictions
+                        WHERE actual_price IS NOT NULL
+                        AND predicted_price IS NOT NULL
+                        AND prediction_date >= CURRENT_DATE - INTERVAL '30 days'
+                        AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
+                        AND ABS(predicted_price - actual_price) > 0.01
+                    ) ranked
+                    WHERE rn = 1
                 ''')
             else:
+                # SQLite optimized using JOIN
                 date_func_30 = get_date_function(-30)
                 cursor.execute(f'''
-                    SELECT predicted_price, actual_price, prediction_method
+                    SELECT p1.predicted_price, p1.actual_price, p1.prediction_method
                     FROM predictions p1
-                    WHERE actual_price IS NOT NULL
-                    AND predicted_price IS NOT NULL
-                    AND prediction_date >= {date_func_30}
-                    AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
-                    AND ABS(predicted_price - actual_price) > 0.01
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    INNER JOIN (
+                        SELECT prediction_date, MAX(created_at) as max_created_at
+                        FROM predictions
+                        WHERE actual_price IS NOT NULL
+                        AND predicted_price IS NOT NULL
+                        AND prediction_date >= {date_func_30}
+                        AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
+                        AND ABS(predicted_price - actual_price) > 0.01
+                        GROUP BY prediction_date
+                    ) p2 ON p1.prediction_date = p2.prediction_date 
+                        AND p1.created_at = p2.max_created_at
                 ''')
 
             price_data = cursor.fetchall()
@@ -390,91 +402,130 @@ class PredictionRepository:
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
-            # Get total unique predictions (all time)
+            # Get total unique predictions (all time) - need to filter weekends
             if db_type == "postgresql":
+                # Optimized using window function
                 cursor.execute('''
-                    SELECT COUNT(DISTINCT prediction_date)
-                    FROM predictions p1
-                    WHERE p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    SELECT DISTINCT prediction_date
+                    FROM (
+                        SELECT prediction_date,
+                               ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                        FROM predictions
+                    ) ranked
+                    WHERE rn = 1
                 ''')
             else:
+                # SQLite optimized using JOIN
                 cursor.execute('''
-                    SELECT COUNT(DISTINCT prediction_date)
+                    SELECT DISTINCT p1.prediction_date
                     FROM predictions p1
-                    WHERE p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    INNER JOIN (
+                        SELECT prediction_date, MAX(created_at) as max_created_at
+                        FROM predictions
+                        GROUP BY prediction_date
+                    ) p2 ON p1.prediction_date = p2.prediction_date 
+                        AND p1.created_at = p2.max_created_at
                 ''')
 
-            total_result = cursor.fetchone()
-            total_count = int(
-                total_result[0]) if total_result[0] is not None else 0
+            total_dates = cursor.fetchall()
+            # Filter out weekends - only count weekdays
+            total_count = 0
+            for row in total_dates:
+                date_value = row[0]
+                if hasattr(date_value, 'weekday'):
+                    weekday = date_value.weekday()
+                elif isinstance(date_value, str):
+                    date_obj = datetime.strptime(date_value, '%Y-%m-%d')
+                    weekday = date_obj.weekday()
+                else:
+                    continue
 
-            # Get evaluated predictions (those with actual_price)
+                # Only count weekdays (Monday=0 to Friday=4)
+                if weekday < 5:
+                    total_count += 1
+
+            # Get evaluated predictions (those with actual_price) - need to filter weekends
             if db_type == "postgresql":
+                # Optimized using window function
                 cursor.execute('''
-                    SELECT COUNT(DISTINCT prediction_date), AVG(accuracy_percentage)
-                    FROM predictions p1
-                    WHERE actual_price IS NOT NULL
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    SELECT DISTINCT prediction_date, accuracy_percentage
+                    FROM (
+                        SELECT prediction_date, accuracy_percentage,
+                               ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                        FROM predictions
+                        WHERE actual_price IS NOT NULL
+                    ) ranked
+                    WHERE rn = 1
                 ''')
             else:
+                # SQLite optimized using JOIN
                 cursor.execute('''
-                    SELECT COUNT(DISTINCT prediction_date), AVG(accuracy_percentage)
+                    SELECT DISTINCT p1.prediction_date, p1.accuracy_percentage
                     FROM predictions p1
-                    WHERE actual_price IS NOT NULL
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    INNER JOIN (
+                        SELECT prediction_date, MAX(created_at) as max_created_at
+                        FROM predictions
+                        WHERE actual_price IS NOT NULL
+                        GROUP BY prediction_date
+                    ) p2 ON p1.prediction_date = p2.prediction_date 
+                        AND p1.created_at = p2.max_created_at
                 ''')
 
-            evaluated_result = cursor.fetchone()
-            evaluated_count = int(
-                evaluated_result[0]) if evaluated_result[0] is not None else 0
-            avg_accuracy = float(
-                evaluated_result[1]) if evaluated_result[1] is not None else 0.0
+            evaluated_results = cursor.fetchall()
+            # Filter out weekends and calculate average accuracy
+            evaluated_count = 0
+            accuracy_values = []
+            for row in evaluated_results:
+                date_value = row[0]
+                if hasattr(date_value, 'weekday'):
+                    weekday = date_value.weekday()
+                elif isinstance(date_value, str):
+                    date_obj = datetime.strptime(date_value, '%Y-%m-%d')
+                    weekday = date_obj.weekday()
+                else:
+                    continue
+
+                # Only count weekdays (Monday=0 to Friday=4)
+                if weekday < 5:
+                    evaluated_count += 1
+                    if row[1] is not None:
+                        accuracy_values.append(float(row[1]))
+
+            avg_accuracy = sum(accuracy_values) / \
+                len(accuracy_values) if accuracy_values else 0.0
 
             # Get predicted and actual prices for R² calculation (all time)
             # Exclude manual entries to get accurate model performance
             if db_type == "postgresql":
+                # Optimized using window function
                 cursor.execute('''
                     SELECT predicted_price, actual_price
-                    FROM predictions p1
-                    WHERE actual_price IS NOT NULL
-                    AND predicted_price IS NOT NULL
-                    AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
-                    AND ABS(predicted_price - actual_price) > 0.01
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    FROM (
+                        SELECT predicted_price, actual_price,
+                               ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                        FROM predictions
+                        WHERE actual_price IS NOT NULL
+                        AND predicted_price IS NOT NULL
+                        AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
+                        AND ABS(predicted_price - actual_price) > 0.01
+                    ) ranked
+                    WHERE rn = 1
                 ''')
             else:
+                # SQLite optimized using JOIN
                 cursor.execute('''
-                    SELECT predicted_price, actual_price
+                    SELECT p1.predicted_price, p1.actual_price
                     FROM predictions p1
-                    WHERE actual_price IS NOT NULL
-                    AND predicted_price IS NOT NULL
-                    AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
-                    AND ABS(predicted_price - actual_price) > 0.01
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    INNER JOIN (
+                        SELECT prediction_date, MAX(created_at) as max_created_at
+                        FROM predictions
+                        WHERE actual_price IS NOT NULL
+                        AND predicted_price IS NOT NULL
+                        AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
+                        AND ABS(predicted_price - actual_price) > 0.01
+                        GROUP BY prediction_date
+                    ) p2 ON p1.prediction_date = p2.prediction_date 
+                        AND p1.created_at = p2.max_created_at
                 ''')
 
             price_data = cursor.fetchall()
@@ -482,26 +533,29 @@ class PredictionRepository:
             # Pending predictions are those without actual_price, excluding weekends
             # Get all predictions without actual_price and filter out weekends
             if db_type == "postgresql":
+                # Optimized using window function
                 cursor.execute('''
                     SELECT DISTINCT prediction_date
-                    FROM predictions p1
-                    WHERE actual_price IS NULL
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    FROM (
+                        SELECT prediction_date,
+                               ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                        FROM predictions
+                        WHERE actual_price IS NULL
+                    ) ranked
+                    WHERE rn = 1
                 ''')
             else:
+                # SQLite optimized using JOIN
                 cursor.execute('''
-                    SELECT DISTINCT prediction_date
+                    SELECT DISTINCT p1.prediction_date
                     FROM predictions p1
-                    WHERE actual_price IS NULL
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    INNER JOIN (
+                        SELECT prediction_date, MAX(created_at) as max_created_at
+                        FROM predictions
+                        WHERE actual_price IS NULL
+                        GROUP BY prediction_date
+                    ) p2 ON p1.prediction_date = p2.prediction_date 
+                        AND p1.created_at = p2.max_created_at
                 ''')
 
             pending_dates = cursor.fetchall()
@@ -560,28 +614,31 @@ class PredictionRepository:
             cursor = conn.cursor()
 
             if db_type == "postgresql":
+                # Optimized using window function
                 cursor.execute('''
                     SELECT prediction_date, predicted_price, prediction_method
-                    FROM predictions p1
-                    WHERE actual_price IS NULL
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
+                    FROM (
+                        SELECT prediction_date, predicted_price, prediction_method,
+                               ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                        FROM predictions
+                        WHERE actual_price IS NULL
+                    ) ranked
+                    WHERE rn = 1
                     ORDER BY prediction_date ASC
                 ''')
             else:
+                # SQLite optimized using JOIN
                 cursor.execute('''
-                    SELECT prediction_date, predicted_price, prediction_method
+                    SELECT p1.prediction_date, p1.predicted_price, p1.prediction_method
                     FROM predictions p1
-                    WHERE actual_price IS NULL
-                    AND p1.created_at = (
-                        SELECT MAX(p2.created_at)
-                        FROM predictions p2
-                        WHERE p2.prediction_date = p1.prediction_date
-                    )
-                    ORDER BY prediction_date ASC
+                    INNER JOIN (
+                        SELECT prediction_date, MAX(created_at) as max_created_at
+                        FROM predictions
+                        WHERE actual_price IS NULL
+                        GROUP BY prediction_date
+                    ) p2 ON p1.prediction_date = p2.prediction_date 
+                        AND p1.created_at = p2.max_created_at
+                    ORDER BY p1.prediction_date ASC
                 ''')
 
             results = cursor.fetchall()

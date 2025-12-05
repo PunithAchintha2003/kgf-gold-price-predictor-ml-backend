@@ -22,6 +22,3 @@ def create_yf_ticker(symbol: str, session=None):
     # yfinance >= 0.2.40 handles anti-blocking internally with curl_cffi
     # Don't pass session parameter - let yfinance create its own optimized session
     return yf.Ticker(symbol)
-
-
-
