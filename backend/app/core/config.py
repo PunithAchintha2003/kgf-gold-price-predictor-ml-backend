@@ -24,9 +24,11 @@ class Settings:
 
         # Cache settings
         self.cache_duration: int = int(os.getenv("CACHE_DURATION", "300"))
-        self.api_cooldown: int = int(os.getenv("API_COOLDOWN", "2"))
+        self.api_cooldown: int = int(os.getenv("API_COOLDOWN", "5"))  # Increased from 2 to 5 seconds
         self.realtime_cache_duration: int = int(
             os.getenv("REALTIME_CACHE_DURATION", "60"))
+        self.rate_limit_initial_backoff: int = int(
+            os.getenv("RATE_LIMIT_INITIAL_BACKOFF", "60"))  # Initial backoff: 60 seconds
 
         # Database settings
         self.use_postgresql: bool = os.getenv(
