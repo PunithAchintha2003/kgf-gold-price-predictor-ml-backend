@@ -89,22 +89,26 @@ async def get_enhanced_prediction(
 
 @router.get("/accuracy-visualization")
 async def get_accuracy_visualization(
+    days: int = 90,
     prediction_repo=Depends(get_prediction_repo)
 ):
     """Get accuracy statistics for visualization"""
     try:
-        stats = prediction_repo.get_accuracy_stats()
+        visualization_data = prediction_repo.get_accuracy_visualization_data(days=days)
         return {
             "status": "success",
-            "data": stats
+            "data": visualization_data['data'],
+            "statistics": visualization_data['statistics'],
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         from ....core.logging_config import get_logger
         logger = get_logger(__name__)
-        logger.error(f"Error getting accuracy stats: {e}", exc_info=True)
+        logger.error(f"Error getting accuracy visualization: {e}", exc_info=True)
         return {
             "status": "error",
-            "message": str(e)
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
         }
 
 
@@ -249,10 +253,21 @@ async def get_prediction_history(
     """Get historical predictions"""
     try:
         predictions = prediction_repo.get_historical_predictions(days=days)
+        # Format to match frontend expectations
+        formatted_predictions = []
+        for pred in predictions:
+            formatted_predictions.append({
+                "date": pred['date'],
+                "predicted_price": pred['predicted_price'],
+                "actual_price": pred['actual_price'],
+                "accuracy_percentage": pred.get('accuracy_percentage'),
+                "status": "completed" if pred['actual_price'] is not None else "pending",
+                "method": pred.get('method', 'Lasso Regression')
+            })
         return {
             "status": "success",
-            "data": predictions,
-            "days": days
+            "predictions": formatted_predictions,
+            "total": len(formatted_predictions)
         }
     except Exception as e:
         from ....core.logging_config import get_logger

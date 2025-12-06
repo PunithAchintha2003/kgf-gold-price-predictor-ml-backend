@@ -8,6 +8,7 @@ warnings.filterwarnings('ignore', category=SyntaxWarning, module='textblob')
 
 import asyncio
 import json
+from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -169,6 +170,55 @@ async def get_daily_data_legacy(days: int = 90):
 async def get_realtime_price_legacy():
     """Get real-time XAU/USD price (legacy endpoint)"""
     return market_data_service.get_realtime_price()
+
+
+@app.get("/xauusd/accuracy-visualization")
+async def get_accuracy_visualization_legacy(days: int = 90):
+    """Get accuracy visualization data (legacy endpoint)"""
+    try:
+        visualization_data = prediction_repo.get_accuracy_visualization_data(days=days)
+        return {
+            "status": "success",
+            "data": visualization_data['data'],
+            "statistics": visualization_data['statistics'],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting accuracy visualization: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@app.get("/xauusd/prediction-history")
+async def get_prediction_history_legacy(days: int = 30):
+    """Get prediction history (legacy endpoint)"""
+    try:
+        predictions = prediction_repo.get_historical_predictions(days=days)
+        # Format to match frontend expectations
+        formatted_predictions = []
+        for pred in predictions:
+            formatted_predictions.append({
+                "date": pred['date'],
+                "predicted_price": pred['predicted_price'],
+                "actual_price": pred['actual_price'],
+                "accuracy_percentage": pred.get('accuracy_percentage'),
+                "status": "completed" if pred['actual_price'] is not None else "pending",
+                "method": pred.get('method', 'Lasso Regression')
+            })
+        return {
+            "status": "success",
+            "predictions": formatted_predictions,
+            "total": len(formatted_predictions)
+        }
+    except Exception as e:
+        logger.error(f"Error getting prediction history: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 
 @app.get("/exchange-rate/{from_currency}/{to_currency}")
