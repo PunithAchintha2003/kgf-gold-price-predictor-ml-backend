@@ -29,7 +29,24 @@ async def broadcast_daily_data(
         try:
             if manager.active_connections:
                 daily_data = market_data_service.get_daily_data()
-                if daily_data != last_broadcast_data:
+
+                # Skip broadcasting if rate limited (to avoid spamming clients)
+                if daily_data.get('status') == 'rate_limited':
+                    wait_seconds = daily_data.get(
+                        'rate_limit_info', {}).get('wait_seconds', 60)
+                    logger.debug(
+                        f"Skipping broadcast - rate limited. Waiting {wait_seconds}s")
+                    # Wait longer when rate limited to avoid repeated attempts
+                    try:
+                        await asyncio.wait_for(
+                            task_manager.shutdown_event.wait(),
+                            # Max 5 minutes wait
+                            timeout=min(wait_seconds, 300.0)
+                        )
+                        break  # Shutdown requested
+                    except asyncio.TimeoutError:
+                        continue  # Continue loop after wait
+                elif daily_data != last_broadcast_data:
                     await manager.broadcast(json.dumps(daily_data))
                     last_broadcast_data = daily_data
 
@@ -107,6 +124,25 @@ async def auto_update_pending_predictions(
                 logger.info(
                     f"🔄 Auto-updating {len(pending)} pending prediction(s)...")
 
+                # Check if we're rate limited before attempting update
+                # Get daily data to check rate limit status
+                daily_data_check = market_data_service.get_daily_data()
+                if daily_data_check.get('status') == 'rate_limited':
+                    wait_seconds = daily_data_check.get(
+                        'rate_limit_info', {}).get('wait_seconds', 60)
+                    logger.info(
+                        f"⏸️ Skipping auto-update - rate limited. Will retry after {wait_seconds}s")
+                    # Wait for rate limit to expire (or max interval)
+                    try:
+                        await asyncio.wait_for(
+                            task_manager.shutdown_event.wait(),
+                            timeout=min(wait_seconds, float(
+                                settings.auto_update_interval))
+                        )
+                        break  # Shutdown requested
+                    except asyncio.TimeoutError:
+                        continue  # Continue loop after wait
+
                 # Retry logic with exponential backoff
                 result = None
                 retry_count = 0
@@ -118,6 +154,13 @@ async def auto_update_pending_predictions(
                         if result.get('status') == 'success':
                             consecutive_failures = 0  # Reset circuit breaker
                             break
+                        elif result.get('status') == 'rate_limited':
+                            # If rate limited during update, wait and skip
+                            wait_seconds = result.get(
+                                'rate_limit_info', {}).get('wait_seconds', 60)
+                            logger.info(
+                                f"⏸️ Rate limited during update. Skipping this cycle. Will retry after {wait_seconds}s")
+                            break  # Exit retry loop, will wait in main loop
                         else:
                             retry_count += 1
                             if retry_count < settings.auto_update_max_retries:

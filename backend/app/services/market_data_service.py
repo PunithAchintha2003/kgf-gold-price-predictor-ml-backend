@@ -42,20 +42,54 @@ class MarketDataService:
         """Get daily market data with predictions"""
         try:
             period = f"{max(days, 90)}d" if isinstance(days, int) else "3mo"
-            hist, symbol_used = market_data_cache.get_cached_market_data(
+            hist, symbol_used, rate_limit_info = market_data_cache.get_cached_market_data(
                 period=period)
 
             if hist is None or hist.empty:
-                logger.error("All gold data sources failed")
-                return {
-                    "symbol": "XAUUSD",
-                    "timeframe": "daily",
-                    "data": [],
-                    "current_price": 0.0,
-                    "timestamp": datetime.now().isoformat(),
-                    "status": "error",
-                    "message": "Unable to fetch gold price data"
-                }
+                # Check if we're rate limited
+                if rate_limit_info and rate_limit_info.get('rate_limited'):
+                    wait_seconds = int(rate_limit_info.get('wait_seconds', 0))
+                    # Don't log as error - rate limiting is expected behavior
+                    logger.info(f"Rate limited by data provider. Retry after {wait_seconds} seconds")
+                    # Try to get historical predictions even when rate limited
+                    try:
+                        all_historical_predictions = self.prediction_repo.get_historical_predictions(days)
+                        accuracy_stats = self.prediction_repo.get_accuracy_stats()
+                    except:
+                        all_historical_predictions = []
+                        accuracy_stats = {
+                            'average_accuracy': 0.0,
+                            'r2_score': 0.0,
+                            'total_predictions': 0,
+                            'evaluated_predictions': 0
+                        }
+                    
+                    return {
+                        "symbol": "XAUUSD",
+                        "timeframe": "daily",
+                        "data": [],
+                        "historical_predictions": all_historical_predictions,
+                        "accuracy_stats": accuracy_stats,
+                        "current_price": 0.0,
+                        "timestamp": datetime.now().isoformat(),
+                        "status": "rate_limited",
+                        "message": f"Data provider rate limit. Please retry after {wait_seconds} seconds.",
+                        "rate_limit_info": {
+                            "wait_seconds": wait_seconds,
+                            "retry_after": datetime.fromtimestamp(rate_limit_info.get('until', 0)).isoformat() if rate_limit_info.get('until') else None
+                        }
+                    }
+                else:
+                    logger.error("All gold data sources failed")
+                    return {
+                        "symbol": "XAUUSD",
+                        "timeframe": "daily",
+                        "data": [],
+                        "current_price": 0.0,
+                        "timestamp": datetime.now().isoformat(),
+                        "status": "error",
+                        "message": "Unable to fetch gold price data"
+                    }
 
             # Get or create prediction for next trading day (skip weekends)
             next_trading_day_dt = get_next_trading_day()
@@ -351,10 +385,23 @@ class MarketDataService:
             days_back = (datetime.now() - oldest_dt).days + 10  # Add buffer
 
             period = f"{max(days_back, 90)}d"
-            hist, symbol_used = market_data_cache.get_cached_market_data(
+            hist, symbol_used, rate_limit_info = market_data_cache.get_cached_market_data(
                 period=period)
 
             if hist is None or hist.empty:
+                # Check if we're rate limited
+                if rate_limit_info and rate_limit_info.get('rate_limited'):
+                    wait_seconds = int(rate_limit_info.get('wait_seconds', 0))
+                    return {
+                        "status": "rate_limited",
+                        "message": f"Data provider rate limit. Please retry after {wait_seconds} seconds.",
+                        "updated_count": 0,
+                        "failed_count": len(pending),
+                        "rate_limit_info": {
+                            "wait_seconds": wait_seconds,
+                            "retry_after": datetime.fromtimestamp(rate_limit_info.get('until', 0)).isoformat() if rate_limit_info.get('until') else None
+                        }
+                    }
                 return {
                     "status": "error",
                     "message": "Unable to fetch market data",
