@@ -49,8 +49,10 @@ class MarketDataService:
                 # Check if we're rate limited
                 if rate_limit_info and rate_limit_info.get('rate_limited'):
                     wait_seconds = int(rate_limit_info.get('wait_seconds', 0))
-                    # Don't log as error - rate limiting is expected behavior
-                    logger.info(f"Rate limited by data provider. Retry after {wait_seconds} seconds")
+                    # Only log once per minute to reduce log spam
+                    if not hasattr(self, '_last_rate_limit_log') or (datetime.now().timestamp() - getattr(self, '_last_rate_limit_log', 0)) > 60:
+                        logger.info(f"Rate limited by data provider. Retry after {wait_seconds} seconds")
+                        self._last_rate_limit_log = datetime.now().timestamp()
                     # Try to get historical predictions even when rate limited
                     try:
                         all_historical_predictions = self.prediction_repo.get_historical_predictions(days)

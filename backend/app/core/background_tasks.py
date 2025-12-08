@@ -49,16 +49,25 @@ async def broadcast_daily_data(
                 elif daily_data != last_broadcast_data:
                     await manager.broadcast(json.dumps(daily_data))
                     last_broadcast_data = daily_data
-
-            # Wait with cancellation support
-            try:
-                await asyncio.wait_for(
-                    task_manager.shutdown_event.wait(),
-                    timeout=5.0
-                )
-                break  # Shutdown requested
-            except asyncio.TimeoutError:
-                continue  # Continue loop
+                    # Wait normal interval after successful broadcast
+                    try:
+                        await asyncio.wait_for(
+                            task_manager.shutdown_event.wait(),
+                            timeout=5.0
+                        )
+                        break  # Shutdown requested
+                    except asyncio.TimeoutError:
+                        continue  # Continue loop
+            else:
+                # No active connections - wait normal interval
+                try:
+                    await asyncio.wait_for(
+                        task_manager.shutdown_event.wait(),
+                        timeout=5.0
+                    )
+                    break  # Shutdown requested
+                except asyncio.TimeoutError:
+                    continue  # Continue loop
         except asyncio.CancelledError:
             logger.debug(f"Task {task_name} cancelled")
             break

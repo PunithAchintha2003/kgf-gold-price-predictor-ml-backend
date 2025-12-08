@@ -147,10 +147,22 @@ async def websocket_endpoint(websocket: WebSocket):
         last_sent_data = None
         while True:
             daily_data = market_data_service.get_daily_data()
-            if daily_data != last_sent_data:
+            
+            # Handle rate limiting - wait longer if rate limited
+            if daily_data.get('status') == 'rate_limited':
+                wait_seconds = daily_data.get('rate_limit_info', {}).get('wait_seconds', 60)
+                # Send rate limit status to client
+                if daily_data != last_sent_data:
+                    await manager.send_personal_message(json.dumps(daily_data), websocket)
+                    last_sent_data = daily_data
+                # Wait for rate limit to expire (max 5 minutes)
+                await asyncio.sleep(min(wait_seconds, 300))
+            elif daily_data != last_sent_data:
                 await manager.send_personal_message(json.dumps(daily_data), websocket)
                 last_sent_data = daily_data
-            await asyncio.sleep(10)
+                await asyncio.sleep(10)
+            else:
+                await asyncio.sleep(10)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
