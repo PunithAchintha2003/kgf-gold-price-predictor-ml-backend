@@ -65,26 +65,33 @@ class MarketDataCache:
                 }
             else:
                 # When rate limited with no cache, extend cache timestamp to prevent repeated attempts
-                logger.info(f"Rate limited with no cached data. Will retry after {wait_remaining:.1f}s")
-                # Extend cache timestamp to prevent repeated fetch attempts until rate limit expires
-                # This prevents the service from trying to fetch every few seconds
+                # Set cache timestamp to expire when rate limit expires to prevent cache expiration check from triggering
+                rate_limit_expiry = datetime.fromtimestamp(self._rate_limit_until)
                 if self._cache_timestamp:
                     # Extend cache to expire when rate limit expires (or normal cache duration, whichever is longer)
-                    rate_limit_expiry = datetime.fromtimestamp(self._rate_limit_until)
                     normal_expiry = self._cache_timestamp + timedelta(seconds=settings.cache_duration)
                     self._cache_timestamp = max(rate_limit_expiry, normal_expiry)
                 else:
                     # Set cache timestamp to expire when rate limit expires
-                    self._cache_timestamp = datetime.fromtimestamp(self._rate_limit_until)
+                    self._cache_timestamp = rate_limit_expiry
+                # Only log once per minute to reduce log spam
+                if not hasattr(self, '_last_rate_limit_log') or (current_time - getattr(self, '_last_rate_limit_log', 0)) > 60:
+                    logger.info(f"Rate limited with no cached data. Will retry after {wait_remaining:.1f}s")
+                    self._last_rate_limit_log = current_time
                 return None, None, {
                     'rate_limited': True,
                     'until': self._rate_limit_until,
                     'wait_seconds': int(wait_remaining)
                 }
 
-        if (self._cache_timestamp is None or
+        # Check cache expiration - but skip if we just set cache_timestamp due to rate limit
+        cache_expired = (
+            self._cache_timestamp is None or
             (now - self._cache_timestamp).total_seconds() > settings.cache_duration or
-                not self._market_data_cache):
+            not self._market_data_cache
+        )
+        
+        if cache_expired:
 
             # Rate limiting: wait if we made a call recently (but don't block for too long)
             wait_time = settings.api_cooldown - \
@@ -174,17 +181,19 @@ class MarketDataCache:
                     }
                 # When rate limited with no cache, extend cache timestamp to prevent repeated attempts
                 wait_remaining = max(0, self._rate_limit_until - current_time)
-                logger.info(f"Rate limited and no cached data available. Will retry after {wait_remaining:.1f}s")
                 # Extend cache timestamp to prevent repeated fetch attempts until rate limit expires
-                # This prevents the service from trying to fetch every few seconds
+                rate_limit_expiry = datetime.fromtimestamp(self._rate_limit_until)
                 if self._cache_timestamp:
                     # Extend cache to expire when rate limit expires (or normal cache duration, whichever is longer)
-                    rate_limit_expiry = datetime.fromtimestamp(self._rate_limit_until)
                     normal_expiry = self._cache_timestamp + timedelta(seconds=settings.cache_duration)
                     self._cache_timestamp = max(rate_limit_expiry, normal_expiry)
                 else:
                     # Set cache timestamp to expire when rate limit expires
-                    self._cache_timestamp = datetime.fromtimestamp(self._rate_limit_until)
+                    self._cache_timestamp = rate_limit_expiry
+                # Only log once per minute to reduce log spam
+                if not hasattr(self, '_last_rate_limit_log') or (current_time - getattr(self, '_last_rate_limit_log', 0)) > 60:
+                    logger.info(f"Rate limited and no cached data available. Will retry after {wait_remaining:.1f}s")
+                    self._last_rate_limit_log = current_time
                 return None, None, {
                     'rate_limited': True,
                     'until': self._rate_limit_until,
@@ -210,7 +219,17 @@ class MarketDataCache:
                 logger.debug(f"Rate limited. Returning cached realtime data (wait {wait_remaining:.1f}s for fresh data)")
                 return self._realtime_cache
             else:
-                logger.warning(f"Rate limited and no cached realtime data available. Wait {wait_remaining:.1f}s")
+                # Extend cache timestamp to prevent repeated checks
+                rate_limit_expiry = datetime.fromtimestamp(self._rate_limit_until)
+                if self._realtime_cache_timestamp:
+                    normal_expiry = self._realtime_cache_timestamp + timedelta(seconds=settings.realtime_cache_duration)
+                    self._realtime_cache_timestamp = max(rate_limit_expiry, normal_expiry)
+                else:
+                    self._realtime_cache_timestamp = rate_limit_expiry
+                # Only log once per minute to reduce log spam
+                if not hasattr(self, '_last_realtime_rate_limit_log') or (current_time - getattr(self, '_last_realtime_rate_limit_log', 0)) > 60:
+                    logger.debug(f"Rate limited and no cached realtime data available. Wait {wait_remaining:.1f}s")
+                    self._last_realtime_rate_limit_log = current_time
                 return None
         
         if (self._realtime_cache_timestamp is None or
