@@ -337,11 +337,22 @@ class MarketDataService:
         if is_weekend(datetime.now()):
             # Get daily data which already has the last trading day's price
             daily_data = self.get_daily_data()
+            # Handle rate limit case
+            if daily_data.get('status') == 'rate_limited':
+                return {
+                    "symbol": "XAUUSD",
+                    "current_price": 0.0,
+                    "timestamp": datetime.now().isoformat(),
+                    "status": "rate_limited",
+                    "message": daily_data.get('message', 'Data provider rate limit'),
+                    "rate_limit_info": daily_data.get('rate_limit_info', {}),
+                    "note": "Using last trading day's closing price (market closed on weekends)"
+                }
             return {
                 "symbol": "XAUUSD",
                 "current_price": daily_data.get('current_price', 0.0),
                 "timestamp": datetime.now().isoformat(),
-                "status": "success",
+                "status": daily_data.get('status', 'success'),
                 "note": "Using last trading day's closing price (market closed on weekends)"
             }
 
@@ -357,11 +368,21 @@ class MarketDataService:
         else:
             # Fallback to daily data (last trading day)
             daily_data = self.get_daily_data()
+            # Handle rate limit case
+            if daily_data.get('status') == 'rate_limited':
+                return {
+                    "symbol": "XAUUSD",
+                    "current_price": 0.0,
+                    "timestamp": datetime.now().isoformat(),
+                    "status": "rate_limited",
+                    "message": daily_data.get('message', 'Data provider rate limit'),
+                    "rate_limit_info": daily_data.get('rate_limit_info', {})
+                }
             return {
                 "symbol": "XAUUSD",
                 "current_price": daily_data.get('current_price', 0.0),
                 "timestamp": datetime.now().isoformat(),
-                "status": "success"
+                "status": daily_data.get('status', 'success')
             }
 
     def update_pending_predictions(self) -> Dict:
