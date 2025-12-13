@@ -1,6 +1,7 @@
 """Background tasks for the application"""
 import asyncio
 import json
+import time
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -44,7 +45,7 @@ async def broadcast_daily_data(
                         break  # Shutdown requested
                     except asyncio.TimeoutError:
                         continue  # Continue loop after wait
-                
+
                 # Only call service if not rate limited
                 daily_data = market_data_service.get_daily_data()
                 if daily_data != last_broadcast_data:
@@ -121,6 +122,7 @@ async def auto_update_pending_predictions(
 
     consecutive_failures = 0
     max_consecutive_failures = 5  # Circuit breaker threshold
+    _last_rate_limit_log = 0  # Throttle rate limit logs (once per minute)
 
     while not task_manager.shutdown_event.is_set():
         try:
@@ -149,8 +151,15 @@ async def auto_update_pending_predictions(
                 from ..utils.cache import market_data_cache
                 is_rate_limited, wait_seconds = market_data_cache.is_rate_limited()
                 if is_rate_limited:
-                    logger.info(
-                        f"⏸️ Skipping auto-update - rate limited. Will retry after {wait_seconds:.0f}s")
+                    # Only log once per minute to reduce log spam
+                    current_time = time.time()
+                    if current_time - _last_rate_limit_log > 60:
+                        logger.info(
+                            f"⏸️ Skipping auto-update - rate limited. Will retry after {wait_seconds:.0f}s")
+                        _last_rate_limit_log = current_time
+                    else:
+                        logger.debug(
+                            f"⏸️ Rate limited. Will retry after {wait_seconds:.0f}s")
                     # Wait for rate limit to expire (or max interval)
                     try:
                         await asyncio.wait_for(
@@ -177,8 +186,15 @@ async def auto_update_pending_predictions(
                             # If rate limited during update, wait and skip
                             wait_seconds = result.get(
                                 'rate_limit_info', {}).get('wait_seconds', 60)
-                            logger.info(
-                                f"⏸️ Rate limited during update. Skipping this cycle. Will retry after {wait_seconds}s")
+                            # Only log once per minute to reduce log spam
+                            current_time = time.time()
+                            if current_time - _last_rate_limit_log > 60:
+                                logger.info(
+                                    f"⏸️ Rate limited during update. Skipping this cycle. Will retry after {wait_seconds}s")
+                                _last_rate_limit_log = current_time
+                            else:
+                                logger.debug(
+                                    f"⏸️ Rate limited. Will retry after {wait_seconds}s")
                             break  # Exit retry loop, will wait in main loop
                         else:
                             retry_count += 1

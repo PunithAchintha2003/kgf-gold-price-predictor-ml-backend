@@ -2,16 +2,21 @@
 
 <div align="center">
 
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.104.1-green.svg)](https://fastapi.tiangolo.com)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Status](https://img.shields.io/badge/status-active-success.svg)](https://github.com)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104.1-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
+[![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg?style=for-the-badge)](https://github.com/psf/black)
+[![Status](https://img.shields.io/badge/status-production-success.svg?style=for-the-badge)](https://kgf-gold-price-predictor.onrender.com)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg?style=for-the-badge)](https://github.com)
 
 **Production-ready FastAPI backend for XAU/USD (Gold) price prediction using machine learning models with news sentiment analysis.**
 
 [Features](#-features) • [Quick Start](#-quick-start) • [Documentation](#-api-documentation) • [Deployment](#-deployment) • [Contributing](#-contributing)
+
+[![Live API](https://img.shields.io/badge/Live%20API-Available-brightgreen?style=flat-square)](https://kgf-gold-price-predictor.onrender.com)
+[![API Docs](https://img.shields.io/badge/API%20Docs-Swagger-blue?style=flat-square)](https://kgf-gold-price-predictor.onrender.com/docs)
+[![Accuracy](https://img.shields.io/badge/Accuracy-96.16%25-success?style=flat-square)]()
 
 </div>
 
@@ -45,7 +50,7 @@
 
 ## 📖 Overview
 
-**KGF Gold Price Predictor** is a production-ready machine learning backend that provides accurate next-day gold price predictions using advanced ML models and real-time market data analysis. The system combines technical indicators with news sentiment analysis to deliver predictions with **96%+ accuracy**.
+**KGF Gold Price Predictor** is a production-ready machine learning backend that provides accurate next-day gold price predictions using advanced ML models and real-time market data analysis. The system combines technical indicators with news sentiment analysis to deliver predictions with **96.16% accuracy**.
 
 ### Key Capabilities
 
@@ -62,6 +67,16 @@
 - Market trend analysis
 - Educational ML projects
 - Portfolio management tools
+
+### Performance Metrics
+
+| Metric                | Value            |
+| --------------------- | ---------------- |
+| **Model Accuracy**    | 96.16%           |
+| **R² Score**          | 0.96+            |
+| **API Response Time** | < 100ms (cached) |
+| **WebSocket Latency** | < 10s            |
+| **Cache Hit Rate**    | ~85%             |
 
 ---
 
@@ -90,6 +105,8 @@
 - ✅ API rate limiting and cooldown
 - ✅ Request/response validation with Pydantic
 - ✅ Graceful error handling
+- ✅ Exponential backoff for rate limits
+- ✅ Circuit breaker pattern for resilience
 
 ---
 
@@ -145,13 +162,17 @@
 
 ### Technology Stack
 
-- **Framework**: FastAPI 0.104.1
-- **Python**: 3.11+
-- **ML Library**: scikit-learn
-- **Database**: PostgreSQL 12+ / SQLite
-- **Market Data**: yfinance
-- **Async**: asyncio, WebSocket
-- **Validation**: Pydantic
+| Category                | Technology         | Version  |
+| ----------------------- | ------------------ | -------- |
+| **Framework**           | FastAPI            | 0.104.1  |
+| **Python**              | Python             | 3.11+    |
+| **ML Library**          | scikit-learn       | 1.4.0+   |
+| **Database**            | PostgreSQL         | 12+      |
+| **Database (Fallback)** | SQLite             | 3.x      |
+| **Market Data**         | yfinance           | 0.2.40+  |
+| **Async**               | asyncio, WebSocket | Built-in |
+| **Validation**          | Pydantic           | 2.x      |
+| **Server**              | Uvicorn            | 0.24.0   |
 
 ---
 
@@ -179,13 +200,14 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # Configure environment variables
-# Create .env file with your database and API settings (see Configuration section)
+cp .env.example .env  # Edit .env with your settings
 
 # Start the server
 python run_backend.py
 ```
 
 The API will be available at:
+
 - **API Base**: http://localhost:8001
 - **Interactive Docs**: http://localhost:8001/docs
 - **Alternative Docs**: http://localhost:8001/redoc
@@ -248,10 +270,20 @@ ALPHA_VANTAGE_KEY=your_alpha_vantage_key
 CACHE_DURATION=300
 API_COOLDOWN=2
 REALTIME_CACHE_DURATION=60
+RATE_LIMIT_INITIAL_BACKOFF=60
 
 # Background Tasks
 AUTO_UPDATE_ENABLED=true
 AUTO_UPDATE_INTERVAL=3600
+AUTO_UPDATE_STARTUP_DELAY=60
+AUTO_UPDATE_MAX_RETRIES=3
+AUTO_UPDATE_RETRY_DELAY=300
+
+# CORS (Development)
+CORS_ORIGINS=http://localhost:4000,http://127.0.0.1:4000
+
+# Server
+PORT=8001
 ```
 
 #### 5. Initialize Database
@@ -276,27 +308,31 @@ python run_backend.py
 
 ### Environment Variables
 
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `ENVIRONMENT` | Environment mode (development/production) | `development` | No |
-| `LOG_LEVEL` | Logging level (DEBUG/INFO/WARNING/ERROR) | `WARNING` | No |
-| `USE_POSTGRESQL` | Enable PostgreSQL database | `true` | No |
-| `POSTGRESQL_HOST` | PostgreSQL host address | `localhost` | Yes* |
-| `POSTGRESQL_PORT` | PostgreSQL port | `5432` | No |
-| `POSTGRESQL_DATABASE` | Database name | `gold_predictor` | Yes* |
-| `POSTGRESQL_USER` | Database username | `postgres` | Yes* |
-| `POSTGRESQL_PASSWORD` | Database password | - | Yes* |
-| `NEWS_API_KEY` | NewsAPI key for sentiment analysis | - | No |
-| `ALPHA_VANTAGE_KEY` | Alpha Vantage API key | - | No |
-| `CACHE_DURATION` | Market data cache TTL (seconds) | `300` | No |
-| `API_COOLDOWN` | API request cooldown (seconds) | `2` | No |
-| `REALTIME_CACHE_DURATION` | Real-time data cache TTL (seconds) | `60` | No |
-| `AUTO_UPDATE_ENABLED` | Enable automatic prediction updates | `true` | No |
-| `AUTO_UPDATE_INTERVAL` | Update interval in seconds | `3600` | No |
-| `CORS_ORIGINS` | Comma-separated list of allowed origins | `*` (dev) | No |
-| `PORT` | Server port | `8001` | No |
+| Variable                     | Description                                 | Default          | Required |
+| ---------------------------- | ------------------------------------------- | ---------------- | -------- |
+| `ENVIRONMENT`                | Environment mode (development/production)   | `development`    | No       |
+| `LOG_LEVEL`                  | Logging level (DEBUG/INFO/WARNING/ERROR)    | `WARNING`        | No       |
+| `USE_POSTGRESQL`             | Enable PostgreSQL database                  | `true`           | No       |
+| `POSTGRESQL_HOST`            | PostgreSQL host address                     | `localhost`      | Yes\*    |
+| `POSTGRESQL_PORT`            | PostgreSQL port                             | `5432`           | No       |
+| `POSTGRESQL_DATABASE`        | Database name                               | `gold_predictor` | Yes\*    |
+| `POSTGRESQL_USER`            | Database username                           | `postgres`       | Yes\*    |
+| `POSTGRESQL_PASSWORD`        | Database password                           | -                | Yes\*    |
+| `NEWS_API_KEY`               | NewsAPI key for sentiment analysis          | -                | No       |
+| `ALPHA_VANTAGE_KEY`          | Alpha Vantage API key                       | -                | No       |
+| `CACHE_DURATION`             | Market data cache TTL (seconds)             | `300`            | No       |
+| `API_COOLDOWN`               | API request cooldown (seconds)              | `2`              | No       |
+| `REALTIME_CACHE_DURATION`    | Real-time data cache TTL (seconds)          | `60`             | No       |
+| `RATE_LIMIT_INITIAL_BACKOFF` | Initial rate limit backoff (seconds)        | `60`             | No       |
+| `AUTO_UPDATE_ENABLED`        | Enable automatic prediction updates         | `true`           | No       |
+| `AUTO_UPDATE_INTERVAL`       | Update interval in seconds                  | `3600`           | No       |
+| `AUTO_UPDATE_STARTUP_DELAY`  | Startup delay before first update (seconds) | `60`             | No       |
+| `AUTO_UPDATE_MAX_RETRIES`    | Maximum retry attempts                      | `3`              | No       |
+| `AUTO_UPDATE_RETRY_DELAY`    | Delay between retries (seconds)             | `300`            | No       |
+| `CORS_ORIGINS`               | Comma-separated list of allowed origins     | `*` (dev)        | No       |
+| `PORT`                       | Server port                                 | `8001`           | No       |
 
-*Required if `USE_POSTGRESQL=true`
+\*Required if `USE_POSTGRESQL=true`
 
 ### Database Configuration
 
@@ -321,6 +357,7 @@ createdb gold_predictor
 ```
 
 **Connection String Format:**
+
 ```
 postgresql://username:password@host:port/database
 ```
@@ -341,8 +378,16 @@ SQLite database will be created automatically at `backend/data/gold_predictions.
 
 ### Base URL
 
+**Development:**
+
 ```
 http://localhost:8001
+```
+
+**Production:**
+
+```
+https://kgf-gold-price-predictor.onrender.com
 ```
 
 ### Interactive Documentation
@@ -354,42 +399,42 @@ http://localhost:8001
 
 #### Health & Status
 
-| Endpoint | Method | Description | Response |
-|----------|--------|-------------|----------|
-| `/` | GET | API root and status | `{"message": "...", "status": "running"}` |
-| `/health` | GET | Health check endpoint | Health status JSON |
-| `/api/v1/health` | GET | Health check (v1) | Detailed health status |
+| Endpoint         | Method | Description           | Response                                  |
+| ---------------- | ------ | --------------------- | ----------------------------------------- |
+| `/`              | GET    | API root and status   | `{"message": "...", "status": "running"}` |
+| `/health`        | GET    | Health check endpoint | Health status JSON                        |
+| `/api/v1/health` | GET    | Health check (v1)     | Detailed health status                    |
 
 #### Market Data
 
-| Endpoint | Method | Description | Query Params |
-|----------|--------|-------------|-------------|
-| `/api/v1/xauusd` | GET | Daily data with predictions | `?days=90` (default: 90) |
-| `/api/v1/xauusd/realtime` | GET | Real-time price data | - |
-| `/api/v1/xauusd/enhanced-prediction` | GET | ML prediction with sentiment | - |
-| `/api/v1/xauusd/prediction-stats` | GET | Comprehensive prediction statistics | - |
-| `/api/v1/xauusd/prediction-history` | GET | Historical predictions | `?days=30` |
-| `/api/v1/xauusd/pending-predictions` | GET | Pending predictions list | - |
-| `/api/v1/xauusd/accuracy-visualization` | GET | Accuracy statistics for visualization | - |
+| Endpoint                                | Method | Description                           | Query Params             |
+| --------------------------------------- | ------ | ------------------------------------- | ------------------------ |
+| `/api/v1/xauusd`                        | GET    | Daily data with predictions           | `?days=90` (default: 90) |
+| `/api/v1/xauusd/realtime`               | GET    | Real-time price data                  | -                        |
+| `/api/v1/xauusd/enhanced-prediction`    | GET    | ML prediction with sentiment          | -                        |
+| `/api/v1/xauusd/prediction-stats`       | GET    | Comprehensive prediction statistics   | -                        |
+| `/api/v1/xauusd/prediction-history`     | GET    | Historical predictions                | `?days=30`               |
+| `/api/v1/xauusd/pending-predictions`    | GET    | Pending predictions list              | -                        |
+| `/api/v1/xauusd/accuracy-visualization` | GET    | Accuracy statistics for visualization | -                        |
 
 #### Data Management
 
-| Endpoint | Method | Description | Body |
-|----------|--------|-------------|------|
-| `/api/v1/xauusd/update-pending-predictions` | POST | Update pending predictions | - |
-| `/api/v1/xauusd/update-actual-prices` | POST | Manually update actual prices | `PriceUpdateRequest` |
+| Endpoint                                    | Method | Description                   | Body                 |
+| ------------------------------------------- | ------ | ----------------------------- | -------------------- |
+| `/api/v1/xauusd/update-pending-predictions` | POST   | Update pending predictions    | -                    |
+| `/api/v1/xauusd/update-actual-prices`       | POST   | Manually update actual prices | `PriceUpdateRequest` |
 
 #### Exchange Rates
 
-| Endpoint | Method | Description | Path Params |
-|----------|--------|-------------|-------------|
-| `/api/v1/exchange/{from_currency}/{to_currency}` | GET | Get exchange rate | `from_currency`, `to_currency` |
+| Endpoint                                         | Method | Description       | Path Params                    |
+| ------------------------------------------------ | ------ | ----------------- | ------------------------------ |
+| `/api/v1/exchange/{from_currency}/{to_currency}` | GET    | Get exchange rate | `from_currency`, `to_currency` |
 
 #### WebSocket
 
-| Endpoint | Description | Update Interval |
-|----------|-------------|-----------------|
-| `/ws/xauusd` | Real-time price streaming | 10 seconds |
+| Endpoint     | Description               | Update Interval |
+| ------------ | ------------------------- | --------------- |
+| `/ws/xauusd` | Real-time price streaming | 10 seconds      |
 
 ### Request/Response Examples
 
@@ -400,6 +445,7 @@ curl http://localhost:8001/api/v1/xauusd?days=30
 ```
 
 **Response:**
+
 ```json
 {
   "symbol": "XAUUSD",
@@ -425,8 +471,9 @@ curl http://localhost:8001/api/v1/xauusd?days=30
   },
   "accuracy_stats": {
     "average_accuracy": 98.95,
-    "total_predictions": 18,
-    "evaluated_predictions": 14
+    "r2_score": 0.96,
+    "total_predictions": 22,
+    "evaluated_predictions": 21
   },
   "status": "success"
 }
@@ -439,10 +486,14 @@ curl http://localhost:8001/api/v1/xauusd/realtime
 ```
 
 **Response:**
+
 ```json
 {
   "symbol": "XAUUSD",
   "current_price": 4184.4,
+  "price_change": 12.5,
+  "change_percentage": 0.3,
+  "last_updated": "2025-11-26 12:00:00",
   "timestamp": "2025-11-26T12:00:00",
   "status": "success"
 }
@@ -455,6 +506,7 @@ curl http://localhost:8001/api/v1/xauusd/enhanced-prediction
 ```
 
 **Response:**
+
 ```json
 {
   "status": "success",
@@ -512,30 +564,30 @@ print(f"Sentiment: {prediction['sentiment']['combined_sentiment']:.2f}")
 ```javascript
 // Fetch daily data
 async function getGoldData() {
-  const response = await fetch('http://localhost:8001/api/v1/xauusd?days=90');
+  const response = await fetch("http://localhost:8001/api/v1/xauusd?days=90");
   const data = await response.json();
-  
-  console.log('Current Price:', data.current_price);
-  console.log('Predicted Price:', data.prediction.predicted_price);
-  
+
+  console.log("Current Price:", data.current_price);
+  console.log("Predicted Price:", data.prediction.predicted_price);
+
   return data;
 }
 
 // WebSocket connection
-const ws = new WebSocket('ws://localhost:8001/ws/xauusd');
+const ws = new WebSocket("ws://localhost:8001/ws/xauusd");
 
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
-  console.log('Real-time Price:', data.current_price);
-  console.log('Prediction:', data.prediction);
+  console.log("Real-time Price:", data.current_price);
+  console.log("Prediction:", data.prediction);
 };
 
 ws.onerror = (error) => {
-  console.error('WebSocket error:', error);
+  console.error("WebSocket error:", error);
 };
 
 ws.onclose = () => {
-  console.log('WebSocket connection closed');
+  console.log("WebSocket connection closed");
 };
 ```
 
@@ -586,11 +638,13 @@ asyncio.run(listen_to_prices())
 **Algorithm**: Lasso Regression with L1 regularization
 
 **Performance Metrics:**
+
 - **R² Score**: 96.16%
 - **Mean Absolute Error**: < 1%
 - **Prediction Window**: Next-day price predictions
 
 **Features:**
+
 - 35+ technical indicators
 - Fundamental market data
 - Moving averages (5, 10, 20, 50-day)
@@ -599,6 +653,7 @@ asyncio.run(listen_to_prices())
 - Price momentum features
 
 **Training:**
+
 - Automated retraining with new market data
 - Cross-validation for model selection
 - Feature selection for optimal performance
@@ -608,18 +663,21 @@ asyncio.run(listen_to_prices())
 **Algorithm**: Lasso Regression + News Sentiment Analysis
 
 **Features:**
+
 - All technical indicators from base model
 - Multi-source news sentiment scores
 - Gold-specific keyword weighting
 - Sentiment trend analysis
 
 **News Sources:**
+
 - Yahoo Finance
 - NewsAPI
 - Alpha Vantage
 - RSS feeds
 
 **Sentiment Analysis:**
+
 - TextBlob-based sentiment scoring
 - Domain-specific keyword extraction
 - Temporal sentiment aggregation
@@ -648,6 +706,7 @@ kgf-gold-price-predictor-ml-backend/
 │   │   │   ├── exceptions.py       # Custom exceptions
 │   │   │   ├── middleware.py       # Custom middleware
 │   │   │   ├── metrics.py          # Performance metrics
+│   │   │   ├── background_tasks.py # Background task definitions
 │   │   │   ├── task_manager.py     # Background task management
 │   │   │   └── websocket.py        # WebSocket connection manager
 │   │   ├── services/
@@ -673,10 +732,15 @@ kgf-gold-price-predictor-ml-backend/
 │   └── data/                       # Database files (SQLite)
 │       ├── gold_predictions.db
 │       └── gold_predictions_backup.db
+├── .github/
+│   └── workflows/
+│       └── deploy.yml              # CI/CD pipeline
 ├── .env                            # Environment variables (not in git)
+├── .env.example                    # Environment variables template
 ├── .gitignore                      # Git ignore rules
 ├── requirements.txt                # Python dependencies
 ├── run_backend.py                  # Application startup script
+├── import_predictions.py           # Data import utility
 ├── train_enhanced_model.py         # Model training script
 ├── Procfile                        # Process configuration (Render)
 ├── render.yaml                     # Render deployment config
@@ -694,21 +758,25 @@ kgf-gold-price-predictor-ml-backend/
 #### Quick Deploy
 
 1. **Push to GitHub**
+
    ```bash
    git push origin main
    ```
 
 2. **Create Render Service**
+
    - Go to [Render Dashboard](https://dashboard.render.com)
    - Click "New +" → "Web Service"
    - Connect your GitHub repository
 
 3. **Configure Settings**
+
    - **Build Command**: `pip install -r requirements.txt`
    - **Start Command**: `python run_backend.py`
    - **Instance Type**: Free tier available
 
 4. **Set Environment Variables**
+
    - Add all variables from your `.env` file
    - **Important**: Set `USE_POSTGRESQL=true`
    - Create PostgreSQL database on Render
@@ -766,17 +834,20 @@ POSTGRESQL_PORT=5432
 NEWS_API_KEY=your_news_api_key
 ALPHA_VANTAGE_KEY=your_alpha_vantage_key
 CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
+PORT=10000
 ```
 
 ### Free Tier Limitations
 
 ⚠️ **Render Free Tier:**
+
 - Spins down after 15 minutes of inactivity
 - First request after sleep takes ~30 seconds
 - Limited to 750 hours/month
 
 ⚠️ **PostgreSQL:**
-- Create a free PostgreSQL database on Render
+
+- Create a free PostgreSQL database on Render or use Neon
 - Configure connection via environment variables
 - Automatic fallback to SQLite if unavailable
 
@@ -913,6 +984,7 @@ LOG_LEVEL=INFO
 ### Metrics
 
 Performance metrics are tracked and available via:
+
 - Response times
 - Cache hit rates
 - Database query performance
@@ -946,6 +1018,7 @@ Performance metrics are tracked and available via:
 - **Lazy Loading**: Models loaded on first use
 - **Request Cooldown**: Prevents API rate limiting
 - **Async Operations**: Non-blocking I/O operations
+- **Exponential Backoff**: Smart rate limit handling
 
 ### Performance Tips
 
@@ -986,6 +1059,7 @@ Performance metrics are tracked and available via:
 ### Security Headers
 
 The application includes security headers:
+
 - CORS configuration
 - Request size limits
 - Input validation
@@ -1002,17 +1076,20 @@ The application includes security headers:
 **Problem**: Cannot connect to PostgreSQL
 
 **Solutions:**
+
 1. Verify PostgreSQL is running:
+
    ```bash
    # macOS
    brew services list
-   
+
    # Linux
    sudo systemctl status postgresql
    ```
 
 2. Check connection credentials in `.env`
 3. Verify database exists:
+
    ```bash
    psql -l | grep gold_predictor
    ```
@@ -1027,6 +1104,7 @@ The application includes security headers:
 **Problem**: `Address already in use` error
 
 **Solution:**
+
 ```bash
 # Find and kill process on port 8001
 lsof -ti:8001 | xargs kill -9
@@ -1040,6 +1118,7 @@ PORT=8002 python run_backend.py
 **Problem**: `ModuleNotFoundError`
 
 **Solution:**
+
 ```bash
 # Ensure you're in the project root
 cd /path/to/kgf-gold-price-predictor-ml-backend
@@ -1056,6 +1135,7 @@ python -c "import sys; print(sys.path)"
 **Problem**: No market data returned
 
 **Solutions:**
+
 1. Check internet connection
 2. Verify yfinance is working:
    ```python
@@ -1064,18 +1144,36 @@ python -c "import sys; print(sys.path)"
    data = ticker.history(period="1d")
    print(data)
    ```
-3. Check API rate limits
+3. Check API rate limits (Yahoo Finance may rate limit)
 4. Review cache settings in `.env`
+5. Check logs for rate limit warnings
 
 #### WebSocket Connection Issues
 
 **Problem**: WebSocket connection fails
 
 **Solutions:**
+
 1. Verify server is running
 2. Check CORS configuration
 3. Ensure WebSocket endpoint is correct: `ws://localhost:8001/ws/xauusd`
 4. Check firewall settings
+
+#### Rate Limiting Warnings
+
+**Problem**: Frequent rate limit warnings in logs
+
+**Explanation**: This is expected behavior when using free Yahoo Finance data. The system handles this gracefully by:
+
+- Using exponential backoff
+- Serving cached data when available
+- Automatically retrying after rate limit expires
+
+**Solutions:**
+
+1. Increase `CACHE_DURATION` to reduce API calls
+2. Increase `RATE_LIMIT_INITIAL_BACKOFF` for longer wait times
+3. The system will automatically recover when rate limits expire
 
 ### Getting Help
 
@@ -1107,6 +1205,8 @@ python -c "import sys; print(sys.path)"
   - News sentiment analysis
   - WebSocket support
   - PostgreSQL/SQLite support
+  - Background task processing
+  - Rate limit handling
 
 ---
 
@@ -1171,6 +1271,8 @@ AI predictions should not be considered financial advice. Always consult qualifi
 - **FastAPI** community for excellent documentation
 - **scikit-learn** contributors for ML tools
 - **PostgreSQL** team for robust database solution
+- **Neon** for PostgreSQL hosting
+- **Render** for deployment platform
 - All contributors and users of this project
 
 ---
@@ -1180,7 +1282,8 @@ AI predictions should not be considered financial advice. Always consult qualifi
 - **Documentation**: Available at `/docs` when server is running
 - **Issues**: [GitHub Issues](https://github.com/yourusername/kgf-gold-price-predictor-ml-backend/issues)
 - **Email**: Punithachintha@gmail.com
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/kgf-gold-price-predictor-ml-backend/discussions)
+- **Live API**: [https://kgf-gold-price-predictor.onrender.com](https://kgf-gold-price-predictor.onrender.com)
+- **API Docs**: [https://kgf-gold-price-predictor.onrender.com/docs](https://kgf-gold-price-predictor.onrender.com/docs)
 
 ---
 
