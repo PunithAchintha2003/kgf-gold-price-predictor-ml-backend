@@ -248,21 +248,18 @@ class PredictionRepository:
                                ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
                         FROM predictions
                         WHERE accuracy_percentage IS NOT NULL
-                        AND prediction_date >= CURRENT_DATE - INTERVAL '30 days'
                     ) ranked
                     WHERE rn = 1
                 ''')
             else:
                 # SQLite optimized using JOIN
-                date_func_30 = get_date_function(-30)
-                cursor.execute(f'''
+                cursor.execute('''
                     SELECT p1.prediction_date, p1.accuracy_percentage
                     FROM predictions p1
                     INNER JOIN (
                         SELECT prediction_date, MAX(created_at) as max_created_at
                         FROM predictions
                         WHERE accuracy_percentage IS NOT NULL
-                        AND prediction_date >= {date_func_30}
                         GROUP BY prediction_date
                     ) p2 ON p1.prediction_date = p2.prediction_date 
                         AND p1.created_at = p2.max_created_at
@@ -299,20 +296,17 @@ class PredictionRepository:
                         SELECT prediction_date,
                                ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
                         FROM predictions
-                        WHERE prediction_date >= CURRENT_DATE - INTERVAL '30 days'
                     ) ranked
                     WHERE rn = 1
                 ''')
             else:
                 # SQLite optimized using JOIN
-                date_func_30 = get_date_function(-30)
-                cursor.execute(f'''
+                cursor.execute('''
                     SELECT DISTINCT p1.prediction_date
                     FROM predictions p1
                     INNER JOIN (
                         SELECT prediction_date, MAX(created_at) as max_created_at
                         FROM predictions
-                        WHERE prediction_date >= {date_func_30}
                         GROUP BY prediction_date
                     ) p2 ON p1.prediction_date = p2.prediction_date 
                         AND p1.created_at = p2.max_created_at
@@ -347,7 +341,6 @@ class PredictionRepository:
                         FROM predictions
                         WHERE actual_price IS NOT NULL
                         AND predicted_price IS NOT NULL
-                        AND prediction_date >= CURRENT_DATE - INTERVAL '30 days'
                         AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
                         AND ABS(predicted_price - actual_price) > 0.01
                     ) ranked
@@ -355,8 +348,7 @@ class PredictionRepository:
                 ''')
             else:
                 # SQLite optimized using JOIN
-                date_func_30 = get_date_function(-30)
-                cursor.execute(f'''
+                cursor.execute('''
                     SELECT p1.predicted_price, p1.actual_price, p1.prediction_method
                     FROM predictions p1
                     INNER JOIN (
@@ -364,7 +356,6 @@ class PredictionRepository:
                         FROM predictions
                         WHERE actual_price IS NOT NULL
                         AND predicted_price IS NOT NULL
-                        AND prediction_date >= {date_func_30}
                         AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
                         AND ABS(predicted_price - actual_price) > 0.01
                         GROUP BY prediction_date

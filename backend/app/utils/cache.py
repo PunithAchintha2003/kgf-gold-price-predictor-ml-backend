@@ -32,6 +32,17 @@ class MarketDataCache:
         self._rate_limit_until = 0  # Timestamp when rate limit expires
         # Start with configured initial backoff
         self._rate_limit_backoff = settings.rate_limit_initial_backoff
+    
+    def is_rate_limited(self) -> Tuple[bool, float]:
+        """
+        Check if currently rate limited without making API calls.
+        Returns: (is_rate_limited, wait_seconds)
+        """
+        current_time = time.time()
+        if current_time < self._rate_limit_until:
+            wait_remaining = self._rate_limit_until - current_time
+            return True, wait_remaining
+        return False, 0.0
 
     def get_cached_market_data(self, period: str = "3mo") -> Tuple[Optional[pd.DataFrame], Optional[str], Optional[Dict]]:
         """

@@ -28,14 +28,12 @@ async def broadcast_daily_data(
     while not task_manager.shutdown_event.is_set():
         try:
             if manager.active_connections:
-                daily_data = market_data_service.get_daily_data()
-
-                # Skip broadcasting if rate limited (to avoid spamming clients)
-                if daily_data.get('status') == 'rate_limited':
-                    wait_seconds = daily_data.get(
-                        'rate_limit_info', {}).get('wait_seconds', 60)
+                # Check rate limit status first to avoid unnecessary service calls
+                from ..utils.cache import market_data_cache
+                is_rate_limited, wait_seconds = market_data_cache.is_rate_limited()
+                if is_rate_limited:
                     logger.debug(
-                        f"Skipping broadcast - rate limited. Waiting {wait_seconds}s")
+                        f"Skipping broadcast - rate limited. Waiting {wait_seconds:.0f}s")
                     # Wait longer when rate limited to avoid repeated attempts
                     try:
                         await asyncio.wait_for(
@@ -46,10 +44,23 @@ async def broadcast_daily_data(
                         break  # Shutdown requested
                     except asyncio.TimeoutError:
                         continue  # Continue loop after wait
-                elif daily_data != last_broadcast_data:
+                
+                # Only call service if not rate limited
+                daily_data = market_data_service.get_daily_data()
+                if daily_data != last_broadcast_data:
                     await manager.broadcast(json.dumps(daily_data))
                     last_broadcast_data = daily_data
                     # Wait normal interval after successful broadcast
+                    try:
+                        await asyncio.wait_for(
+                            task_manager.shutdown_event.wait(),
+                            timeout=5.0
+                        )
+                        break  # Shutdown requested
+                    except asyncio.TimeoutError:
+                        continue  # Continue loop
+                else:
+                    # No change in data - wait normal interval
                     try:
                         await asyncio.wait_for(
                             task_manager.shutdown_event.wait(),
@@ -134,13 +145,12 @@ async def auto_update_pending_predictions(
                     f"🔄 Auto-updating {len(pending)} pending prediction(s)...")
 
                 # Check if we're rate limited before attempting update
-                # Get daily data to check rate limit status
-                daily_data_check = market_data_service.get_daily_data()
-                if daily_data_check.get('status') == 'rate_limited':
-                    wait_seconds = daily_data_check.get(
-                        'rate_limit_info', {}).get('wait_seconds', 60)
+                # Check cache directly to avoid triggering service calls and logs
+                from ..utils.cache import market_data_cache
+                is_rate_limited, wait_seconds = market_data_cache.is_rate_limited()
+                if is_rate_limited:
                     logger.info(
-                        f"⏸️ Skipping auto-update - rate limited. Will retry after {wait_seconds}s")
+                        f"⏸️ Skipping auto-update - rate limited. Will retry after {wait_seconds:.0f}s")
                     # Wait for rate limit to expire (or max interval)
                     try:
                         await asyncio.wait_for(
