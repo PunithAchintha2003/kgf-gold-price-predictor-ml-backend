@@ -29,6 +29,8 @@ class Settings:
             os.getenv("REALTIME_CACHE_DURATION", "60"))
         self.rate_limit_initial_backoff: int = int(
             os.getenv("RATE_LIMIT_INITIAL_BACKOFF", "60"))  # Initial backoff: 60 seconds
+        self.rate_limit_max_backoff: int = int(
+            os.getenv("RATE_LIMIT_MAX_BACKOFF", "1800"))  # Max backoff: 30 minutes
 
         # Database settings
         self.use_postgresql: bool = os.getenv(

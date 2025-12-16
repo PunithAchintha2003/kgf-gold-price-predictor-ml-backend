@@ -7,6 +7,7 @@ import pandas as pd
 
 from ..core.config import settings
 from .yfinance_helper import create_yf_ticker
+from .fallback_data import fallback_provider
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +165,7 @@ class MarketDataCache:
                     rate_limited = True
                     # Exponential backoff: increase wait time each time we're rate limited
                     self._rate_limit_backoff = min(
-                        self._rate_limit_backoff * 2, 3600)  # Max 1 hour
+                        self._rate_limit_backoff * 2, settings.rate_limit_max_backoff)
                     self._rate_limit_until = current_time + self._rate_limit_backoff
                     # Only log once per minute to reduce log spam
                     if not hasattr(self, '_last_market_rate_limit_warning') or (current_time - getattr(self, '_last_market_rate_limit_warning', 0)) > 60:
@@ -179,7 +180,7 @@ class MarketDataCache:
                     if "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
                         rate_limited = True
                         self._rate_limit_backoff = min(
-                            self._rate_limit_backoff * 2, 3600)
+                            self._rate_limit_backoff * 2, settings.rate_limit_max_backoff)
                         self._rate_limit_until = current_time + self._rate_limit_backoff
                         # Only log once per minute to reduce log spam
                         if not hasattr(self, '_last_market_rate_limit_warning') or (current_time - getattr(self, '_last_market_rate_limit_warning', 0)) > 60:
@@ -327,12 +328,15 @@ class MarketDataCache:
                             self._realtime_cache_timestamp = now
                             # Reset rate limit backoff on successful fetch
                             self._rate_limit_backoff = settings.rate_limit_initial_backoff
+                            # Update fallback provider with latest price
+                            fallback_provider.update_last_known_price(
+                                current_price)
                             return result
                     except YFRateLimitError as e:
                         rate_limited = True
                         # Exponential backoff
                         self._rate_limit_backoff = min(
-                            self._rate_limit_backoff * 2, 3600)  # Max 1 hour
+                            self._rate_limit_backoff * 2, settings.rate_limit_max_backoff)
                         self._rate_limit_until = current_time + self._rate_limit_backoff
                         # Only log once per minute to reduce log spam
                         if not hasattr(self, '_last_realtime_rate_limit_warning') or (current_time - getattr(self, '_last_realtime_rate_limit_warning', 0)) > 60:
@@ -346,7 +350,7 @@ class MarketDataCache:
                         if "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
                             rate_limited = True
                             self._rate_limit_backoff = min(
-                                self._rate_limit_backoff * 2, 3600)
+                                self._rate_limit_backoff * 2, settings.rate_limit_max_backoff)
                             self._rate_limit_until = current_time + self._rate_limit_backoff
                             # Only log once per minute to reduce log spam
                             if not hasattr(self, '_last_realtime_rate_limit_warning') or (current_time - getattr(self, '_last_realtime_rate_limit_warning', 0)) > 60:
@@ -368,6 +372,12 @@ class MarketDataCache:
                                 "Rate limited - returning cached realtime data")
                             self._last_realtime_cache_log = current_time
                         return self._realtime_cache
+                    # If rate limited for more than 10 minutes, use fallback data
+                    wait_remaining = self._rate_limit_until - current_time
+                    if wait_remaining > 600:  # 10 minutes
+                        fallback_data = fallback_provider.get_fallback_realtime_data()
+                        if fallback_data:
+                            return fallback_data
                     # Only log once per minute to reduce log spam
                     if not hasattr(self, '_last_realtime_no_cache_log') or (current_time - getattr(self, '_last_realtime_no_cache_log', 0)) > 60:
                         logger.warning(
