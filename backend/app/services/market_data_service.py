@@ -278,6 +278,14 @@ class MarketDataService:
                 "note": "Backend includes all available market data and predictions"
             }
 
+            # Get model information
+            model_info = None
+            if hasattr(self.prediction_service, 'get_model_info'):
+                try:
+                    model_info = self.prediction_service.get_model_info()
+                except Exception as e:
+                    logger.debug(f"Could not get model info: {e}")
+
             return {
                 "symbol": "XAUUSD",
                 "timeframe": "daily",
@@ -286,6 +294,7 @@ class MarketDataService:
                 "accuracy_stats": accuracy_stats,
                 "current_price": current_price,
                 "prediction": prediction_obj,
+                "model_info": model_info,
                 "metadata": metadata,
                 "timestamp": datetime.now().isoformat(),
                 "status": "success"

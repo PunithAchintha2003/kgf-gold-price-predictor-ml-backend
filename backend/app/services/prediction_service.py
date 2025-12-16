@@ -87,3 +87,44 @@ class PredictionService:
             return "Lasso Regression (Fallback)"
         else:
             return "No Model Available"
+    
+    def get_model_info(self) -> dict:
+        """Get detailed information about the active model"""
+        model_info = {
+            "active_model": None,
+            "model_type": None,
+            "r2_score": None,
+            "features_count": None,
+            "selected_features_count": None,
+            "fallback_available": False
+        }
+        
+        # Check for News-Enhanced model
+        if self.news_enhanced_predictor and self.news_enhanced_predictor.model is not None:
+            model_info["active_model"] = "News-Enhanced Lasso Regression"
+            model_info["model_type"] = "News-Enhanced Lasso"
+            model_info["r2_score"] = round(self.news_enhanced_predictor.best_score, 4) if hasattr(self.news_enhanced_predictor, 'best_score') and self.news_enhanced_predictor.best_score else None
+            model_info["features_count"] = len(self.news_enhanced_predictor.feature_columns) if hasattr(self.news_enhanced_predictor, 'feature_columns') else None
+            model_info["selected_features_count"] = len(self.news_enhanced_predictor.selected_features) if hasattr(self.news_enhanced_predictor, 'selected_features') else None
+            model_info["fallback_available"] = self.lasso_predictor is not None and self.lasso_predictor.model is not None
+            
+            # Add feature details if available
+            if hasattr(self.news_enhanced_predictor, 'selected_features') and self.news_enhanced_predictor.selected_features:
+                model_info["selected_features"] = self.news_enhanced_predictor.selected_features[:10]  # First 10 features
+                model_info["total_features"] = len(self.news_enhanced_predictor.feature_columns) if hasattr(self.news_enhanced_predictor, 'feature_columns') else None
+            
+        # Check for Lasso Regression fallback
+        elif self.lasso_predictor and self.lasso_predictor.model is not None:
+            model_info["active_model"] = "Lasso Regression"
+            model_info["model_type"] = "Lasso Regression"
+            model_info["r2_score"] = round(self.lasso_predictor.best_score, 4) if hasattr(self.lasso_predictor, 'best_score') and self.lasso_predictor.best_score else None
+            model_info["features_count"] = len(self.lasso_predictor.feature_columns) if hasattr(self.lasso_predictor, 'feature_columns') else None
+            model_info["selected_features_count"] = len(self.lasso_predictor.selected_features) if hasattr(self.lasso_predictor, 'selected_features') else None
+            model_info["fallback_available"] = False
+            
+            # Add feature details if available
+            if hasattr(self.lasso_predictor, 'selected_features') and self.lasso_predictor.selected_features:
+                model_info["selected_features"] = self.lasso_predictor.selected_features[:10]  # First 10 features
+                model_info["total_features"] = len(self.lasso_predictor.feature_columns) if hasattr(self.lasso_predictor, 'feature_columns') else None
+        
+        return model_info

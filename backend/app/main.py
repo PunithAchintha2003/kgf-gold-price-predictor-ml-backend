@@ -164,10 +164,14 @@ async def websocket_endpoint(websocket: WebSocket):
             else:
                 await asyncio.sleep(10)
     except WebSocketDisconnect:
+        logger.debug("WebSocket client disconnected")
         manager.disconnect(websocket)
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-        manager.disconnect(websocket)
+        logger.error(f"WebSocket error: {e}", exc_info=True)
+        try:
+            manager.disconnect(websocket)
+        except Exception as disconnect_error:
+            logger.error(f"Error disconnecting WebSocket: {disconnect_error}", exc_info=True)
 
 
 # Legacy endpoints (for backward compatibility)
@@ -241,37 +245,79 @@ async def get_exchange_rate_legacy(from_currency: str, to_currency: str):
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize on startup"""
-    logger.info(f"🚀 Server starting in {settings.environment} mode")
+    """
+    Application startup event handler
+    Industry-standard startup sequence with proper error handling
+    """
+    try:
+        logger.info(f"🚀 Server starting in {settings.environment} mode")
+        
+        # Log system configuration
+        logger.info(f"Environment: {settings.environment}")
+        logger.info(f"Log Level: {settings.log_level.upper()}")
+        logger.info(f"Database: {'PostgreSQL' if settings.use_postgresql else 'SQLite'}")
+        logger.info(f"Auto-update: {'Enabled' if settings.auto_update_enabled else 'Disabled'}")
 
-    # Start background tasks with proper registration
-    broadcast_task = asyncio.create_task(
-        broadcast_daily_data(manager, market_data_service, task_manager)
-    )
-    task_manager.register_task("broadcast_daily_data", broadcast_task)
+        # Log ML model information
+        model_info = prediction_service.get_model_info()
+        logger.info(f"🤖 ML Model: {model_info.get('active_model', 'No Model Available')}")
+        if model_info.get('r2_score') is not None:
+            logger.info(f"📊 Model Accuracy (R²): {model_info['r2_score']} ({model_info['r2_score']*100:.2f}%)")
+        selected_count = model_info.get('selected_features_count', 0)
+        total_count = model_info.get('total_features', model_info.get('features_count', 0))
+        if total_count > 0:
+            logger.info(f"🔧 Features: {selected_count}/{total_count} selected")
+        if model_info.get('selected_features'):
+            top_features = ', '.join(model_info['selected_features'][:3])
+            logger.info(f"⭐ Top Features: {top_features}...")
+        if model_info.get('fallback_available'):
+            logger.info("🔄 Fallback model: Available (Lasso Regression)")
 
-    if settings.auto_update_enabled:
-        update_task = asyncio.create_task(
-            auto_update_pending_predictions(
-                market_data_service, prediction_repo, task_manager
+        # Start background tasks with proper registration
+        broadcast_task = asyncio.create_task(
+            broadcast_daily_data(manager, market_data_service, task_manager)
+        )
+        task_manager.register_task("broadcast_daily_data", broadcast_task)
+        logger.debug("Background task 'broadcast_daily_data' registered")
+
+        if settings.auto_update_enabled:
+            update_task = asyncio.create_task(
+                auto_update_pending_predictions(
+                    market_data_service, prediction_repo, task_manager
+                )
             )
-        )
-        task_manager.register_task(
-            "auto_update_pending_predictions", update_task
-        )
-        logger.info(
-            f"🔄 Auto-update task started: pending predictions will be updated every {settings.auto_update_interval}s")
-    else:
-        logger.info("🔄 Auto-update task is disabled via configuration")
+            task_manager.register_task(
+                "auto_update_pending_predictions", update_task
+            )
+            logger.info(
+                f"🔄 Auto-update task started: pending predictions will be updated every {settings.auto_update_interval}s")
+        else:
+            logger.info("🔄 Auto-update task is disabled via configuration")
 
-    logger.info("✅ Ready - API available at http://localhost:8001")
+        logger.info("✅ Ready - API available at http://localhost:8001")
+        
+    except Exception as e:
+        logger.error(f"Failed to start application: {e}", exc_info=True)
+        raise
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Cleanup on shutdown"""
-    logger.info("🛑 Server shutting down")
-    await task_manager.shutdown()
+    """
+    Application shutdown event handler
+    Industry-standard graceful shutdown with resource cleanup
+    """
+    try:
+        logger.info("🛑 Server shutting down")
+        
+        # Shutdown background tasks
+        await task_manager.shutdown()
+        
+        # Close WebSocket connections
+        await manager.disconnect_all()
+        
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}", exc_info=True)
 
 
 if __name__ == "__main__":

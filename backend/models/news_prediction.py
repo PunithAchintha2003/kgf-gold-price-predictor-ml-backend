@@ -477,26 +477,55 @@ class NewsEnhancedLassoPredictor:
             "Training enhanced Lasso model with news sentiment features")
 
         # Prepare training data
+        # Use current day features to predict current day price (no shift needed)
         data = enhanced_features.copy()
-        data['target'] = data[target_col].shift(-1)
-        data_clean = data.dropna()
+        
+        # Remove any rows with NaN in target column
+        data_clean = data.dropna(subset=[target_col])
 
         if data_clean.empty:
             logger.error("No valid data after cleaning")
             return None
+        
+        logger.info(f"Training data shape: {data_clean.shape}")
 
         # Separate features and target
         feature_cols = [
-            col for col in data_clean.columns if col not in ['target', target_col]]
+            col for col in data_clean.columns if col != target_col]
         X = data_clean[feature_cols]
-        y = data_clean['target']
+        y = data_clean[target_col]
+        
+        # Fill any remaining NaN values in features
+        X = X.fillna(0)
+        
+        # Remove any rows where target is NaN or infinite
+        valid_mask = np.isfinite(y)
+        X = X[valid_mask]
+        y = y[valid_mask]
+        
+        if len(X) == 0:
+            logger.error("No valid samples after removing NaN/infinite values")
+            return None
 
         self.feature_columns = feature_cols
+
+        # Check if we have enough samples
+        if len(X) < 10:
+            logger.error(f"Insufficient data for training: only {len(X)} samples")
+            logger.info("Need at least 10 samples to train the model")
+            return None
+
+        # Adjust test_size if we have limited data
+        min_test_samples = max(2, int(len(X) * 0.1))  # At least 2 or 10% for test
+        adjusted_test_size = min(test_size, min_test_samples / len(X))
+        
+        if adjusted_test_size < test_size:
+            logger.warning(f"Adjusted test_size from {test_size} to {adjusted_test_size} due to limited data")
 
         # Split data
         from sklearn.model_selection import train_test_split
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=self.random_state, shuffle=False
+            X, y, test_size=adjusted_test_size, random_state=self.random_state, shuffle=False
         )
 
         # Scale features
@@ -663,6 +692,7 @@ class NewsEnhancedLassoPredictor:
             models_dir = Path(__file__).resolve().parent
             filepath = str(models_dir / filepath)
 
+        # Don't save the news_analyzer object to avoid pickle issues
         model_data = {
             'model': self.model,
             'scaler': self.scaler,
@@ -672,7 +702,7 @@ class NewsEnhancedLassoPredictor:
             'best_score': self.best_score,
             'alpha': self.alpha,
             'max_iter': self.max_iter,
-            'news_analyzer': self.news_analyzer
+            # Don't save news_analyzer - it will be recreated on load
         }
 
         joblib.dump(model_data, filepath)
@@ -703,8 +733,8 @@ class NewsEnhancedLassoPredictor:
         self.best_score = model_data['best_score']
         self.alpha = model_data.get('alpha', 0.01)
         self.max_iter = model_data.get('max_iter', 2000)
-        self.news_analyzer = model_data.get(
-            'news_analyzer', NewsSentimentAnalyzer())
+        # Always create a new news_analyzer instance (don't load from pickle)
+        self.news_analyzer = NewsSentimentAnalyzer()
 
         logger.info(f"Enhanced Lasso model loaded from {filepath}")
 
@@ -728,7 +758,7 @@ def main():
 
     # Fetch and analyze news
     logger.info("Fetching and analyzing news...")
-    sentiment_features = predictor.fetch_and_analyze_news(days_back=30)
+    sentiment_features = predictor.fetch_and_analyze_news(days_back=90)
 
     # Create enhanced features
     logger.info("Creating enhanced features...")
