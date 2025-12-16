@@ -31,7 +31,7 @@ def init_postgresql_pool() -> bool:
         return False
 
     try:
-        # Build connection parameters with SSL support for cloud databases
+        # Build connection parameters with SSL support for cloud databases (e.g., Render, Neon.tech)
         connection_params = {
             'host': settings.postgresql_host,
             'port': settings.postgresql_port,
