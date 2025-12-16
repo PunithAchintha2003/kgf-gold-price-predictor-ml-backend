@@ -41,13 +41,16 @@ def initialize_models():
             news_enhanced_predictor.load_enhanced_model(
                 str(enhanced_model_path))
             logger.info("✅ News-Enhanced Lasso model loaded successfully")
-            logger.info(f"   Model accuracy (R²): {news_enhanced_predictor.best_score:.4f}")
-            logger.info(f"   Selected features: {len(news_enhanced_predictor.selected_features)}")
+            logger.info(
+                f"   Model accuracy (R²): {news_enhanced_predictor.best_score:.4f}")
+            logger.info(
+                f"   Selected features: {len(news_enhanced_predictor.selected_features)}")
         except Exception as e:
             logger.warning(f"News-enhanced model failed to load: {e}")
             news_enhanced_predictor = None
     else:
-        logger.info("ℹ️  News-Enhanced model not found - using Lasso Regression only")
+        logger.info(
+            "ℹ️  News-Enhanced model not found - using Lasso Regression only")
         logger.info(f"   Enhanced model path: {enhanced_model_path}")
 
     return lasso_predictor, news_enhanced_predictor
