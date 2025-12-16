@@ -36,7 +36,9 @@ ENV/
 Thumbs.db
 
 # Model files (will be generated)
+# Note: Allow model files in backend/models/ directory
 *.pkl
+!backend/models/*.pkl
 *.joblib
 
 # Database files (SQLite - using PostgreSQL in production)
