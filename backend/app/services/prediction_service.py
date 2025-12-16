@@ -42,7 +42,7 @@ class PredictionService:
 
                     if prediction is not None:
                         logger.info(
-                            "Using News-Enhanced Lasso model for prediction")
+                            "🤖 Using News-Enhanced Lasso model for prediction")
                         return float(prediction)
                 except Exception as e:
                     logger.warning(f"News-Enhanced prediction failed: {e}")
@@ -68,7 +68,7 @@ class PredictionService:
 
                     if prediction is not None:
                         logger.info(
-                            "Using Lasso Regression model for prediction")
+                            "🤖 Using Lasso Regression model for prediction")
                         return float(prediction)
                 except Exception as e:
                     logger.warning(f"Lasso prediction failed: {e}")
