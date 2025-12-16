@@ -15,11 +15,15 @@ services:
       - key: LOG_LEVEL
         value: INFO
       - key: CACHE_DURATION
-        value: 300
+        value: 900
       - key: API_COOLDOWN
-        value: 2
+        value: 10
       - key: REALTIME_CACHE_DURATION
-        value: 60
+        value: 180
+      - key: RATE_LIMIT_INITIAL_BACKOFF
+        value: 120
+      - key: AUTO_UPDATE_INTERVAL
+        value: 7200
       - key: USE_POSTGRESQL
         value: "true"
       - key: CORS_ORIGINS
