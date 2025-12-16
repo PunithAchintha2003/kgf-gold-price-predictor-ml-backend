@@ -16,10 +16,15 @@ router = APIRouter()
 @router.get("")
 async def get_daily_data(
     days: int = 90,
-    market_data_service=Depends(get_market_data_service)
+    market_data_service=Depends(get_market_data_service),
+    prediction_service=Depends(get_prediction_service)
 ):
-    """Get XAU/USD daily data"""
-    return market_data_service.get_daily_data(days=days)
+    """Get XAU/USD daily data with model information"""
+    data = market_data_service.get_daily_data(days=days)
+    # Add model info if not already present
+    if isinstance(data, dict) and "model_info" not in data:
+        data["model_info"] = prediction_service.get_model_info()
+    return data
 
 
 @router.get("/realtime")
@@ -56,8 +61,9 @@ async def get_enhanced_prediction(
         change_percentage = (change / current_price *
                              100) if current_price > 0 else 0
 
-        # Get method name
+        # Get method name and model information
         method = prediction_service.get_model_display_name()
+        model_info = prediction_service.get_model_info()
 
         return {
             "status": "success",
@@ -67,6 +73,17 @@ async def get_enhanced_prediction(
                 "change": round(change, 2),
                 "change_percentage": round(change_percentage, 2),
                 "method": method
+            },
+            "model": {
+                "name": model_info.get("active_model", "Unknown"),
+                "type": model_info.get("model_type", "Unknown"),
+                "r2_score": model_info.get("r2_score"),
+                "features": {
+                    "total": model_info.get("features_count"),
+                    "selected": model_info.get("selected_features_count"),
+                    "top_features": model_info.get("selected_features", [])[:5]  # Top 5 features
+                },
+                "fallback_available": model_info.get("fallback_available", False)
             },
             "sentiment": {
                 "combined_sentiment": 0.0,  # Placeholder - would need news analyzer
@@ -105,6 +122,29 @@ async def get_accuracy_visualization(
         from ....core.logging_config import get_logger
         logger = get_logger(__name__)
         logger.error(f"Error getting accuracy visualization: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/model-info")
+async def get_model_info(
+    prediction_service=Depends(get_prediction_service)
+):
+    """Get detailed information about the active ML model"""
+    try:
+        model_info = prediction_service.get_model_info()
+        return {
+            "status": "success",
+            "model": model_info,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        from ....core.logging_config import get_logger
+        logger = get_logger(__name__)
+        logger.error(f"Error getting model info: {e}", exc_info=True)
         return {
             "status": "error",
             "message": str(e),

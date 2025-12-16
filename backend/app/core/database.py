@@ -31,20 +31,29 @@ def init_postgresql_pool() -> bool:
         return False
 
     try:
-        # Build connection parameters with SSL support for cloud databases (e.g., Render)
+        # Build connection parameters with SSL support for cloud databases (e.g., Render, Neon.tech)
         connection_params = {
             'host': settings.postgresql_host,
             'port': settings.postgresql_port,
             'database': settings.postgresql_database,
             'user': settings.postgresql_user,
-            'password': settings.postgresql_password
+            'password': settings.postgresql_password,
+            # Add connection parameters to prevent stale connections
+            'connect_timeout': 10,  # 10 second connection timeout
+            'keepalives': 1,  # Enable TCP keepalives
+            'keepalives_idle': 30,  # Start keepalives after 30 seconds of idle
+            'keepalives_interval': 10,  # Send keepalive every 10 seconds
+            'keepalives_count': 3,  # Close connection after 3 failed keepalives
         }
-        
-        # Add SSL mode for cloud databases (Render, Heroku, etc.)
+
+        # Add SSL mode for cloud databases (Render, Neon.tech, Heroku, AWS, etc.)
         # If hostname looks like a cloud database, require SSL
-        if 'render.com' in settings.postgresql_host or 'amazonaws.com' in settings.postgresql_host or 'herokuapp.com' in settings.postgresql_host:
+        if ('render.com' in settings.postgresql_host.lower() or
+            'amazonaws.com' in settings.postgresql_host.lower() or
+            'herokuapp.com' in settings.postgresql_host.lower() or
+                'neon.tech' in settings.postgresql_host.lower()):
             connection_params['sslmode'] = 'require'
-        
+
         _postgresql_pool = psycopg2.pool.SimpleConnectionPool(
             1, 20,  # min and max connections
             **connection_params
@@ -129,12 +138,13 @@ def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3):
                     if conn:
                         # Check if connection is alive before using it
                         if not _is_connection_alive(conn):
-                            logger.warning(
-                                f"Connection from pool is dead, attempt {attempt + 1}/{max_retries}")
+                            logger.debug(
+                                f"Connection from pool is dead, attempt {attempt + 1}/{max_retries} - getting fresh connection")
                             try:
                                 conn.close()
                             except:
                                 pass
+                            # Don't return dead connection to pool
                             conn = None
                             if attempt < max_retries - 1:
                                 continue
@@ -153,8 +163,8 @@ def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3):
                                 "Failed to get connection from pool")
                 except Exception as e:
                     if attempt < max_retries - 1:
-                        logger.warning(
-                            f"Error getting connection (attempt {attempt + 1}/{max_retries}): {e}")
+                        logger.debug(
+                            f"Retrying connection (attempt {attempt + 1}/{max_retries}): {str(e)[:100]}")
                         if conn:
                             try:
                                 conn.close()
@@ -163,6 +173,8 @@ def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3):
                             conn = None
                         continue
                     else:
+                        logger.error(
+                            f"Failed to get database connection after {max_retries} attempts: {e}")
                         raise
         else:
             # Fallback to SQLite
@@ -192,7 +204,7 @@ def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3):
                         _postgresql_pool.putconn(conn)
                     else:
                         # Connection is dead, close it instead of returning to pool
-                        logger.warning(
+                        logger.debug(
                             "Connection is dead, closing instead of returning to pool")
                         try:
                             conn.close()

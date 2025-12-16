@@ -37,3 +37,20 @@ class ConnectionManager:
                 await connection.send_text(message)
             except Exception as e:
                 logger.error(f"Error sending message to client: {e}")
+
+    async def disconnect_all(self):
+        """Disconnect all active WebSocket connections (graceful shutdown)"""
+        disconnected_count = 0
+        for connection in list(self.active_connections):  # Create copy to iterate safely
+            try:
+                await connection.close()
+                self.active_connections.remove(connection)
+                disconnected_count += 1
+            except Exception as e:
+                logger.warning(f"Error closing WebSocket connection: {e}")
+                # Remove from list even if close failed
+                if connection in self.active_connections:
+                    self.active_connections.remove(connection)
+        
+        if disconnected_count > 0:
+            logger.info(f"Disconnected {disconnected_count} WebSocket client(s)")

@@ -96,6 +96,44 @@ def main():
     print(f"📊 Backend will be available at: http://0.0.0.0:{PORT}")
     print(f"📡 WebSocket endpoint: ws://0.0.0.0:{PORT}/ws/xauusd")
     print(f"🌐 API docs: http://0.0.0.0:{PORT}/docs")
+    
+    # Display ML model information
+    try:
+        project_root = Path(__file__).resolve().parent
+        backend_path = project_root / "backend"
+        
+        # Add paths for imports
+        if str(project_root) not in sys.path:
+            sys.path.insert(0, str(project_root))
+        if str(backend_path) not in sys.path:
+            sys.path.insert(0, str(backend_path))
+        
+        from backend.app.core.models import initialize_models
+        from backend.app.services.prediction_service import PredictionService
+        
+        lasso_predictor, news_enhanced_predictor = initialize_models()
+        prediction_service = PredictionService(
+            lasso_predictor=lasso_predictor,
+            news_enhanced_predictor=news_enhanced_predictor
+        )
+        
+        model_info = prediction_service.get_model_info()
+        print(f"🤖 ML Model: {model_info.get('active_model', 'No Model Available')}")
+        if model_info.get('r2_score') is not None:
+            print(f"📊 Model Accuracy (R²): {model_info['r2_score']} ({model_info['r2_score']*100:.2f}%)")
+        selected_count = model_info.get('selected_features_count', 0)
+        total_count = model_info.get('total_features', model_info.get('features_count', 0))
+        if total_count > 0:
+            print(f"🔧 Features: {selected_count}/{total_count} selected")
+        if model_info.get('selected_features'):
+            top_features = ', '.join(model_info['selected_features'][:3])
+            print(f"⭐ Top Features: {top_features}...")
+        if model_info.get('fallback_available'):
+            print("🔄 Fallback model: Available (Lasso Regression)")
+    except Exception as e:
+        print(f"⚠️  Could not load model info: {e}")
+        import traceback
+        traceback.print_exc()
 
     # Enable auto-reload in development mode
     is_development = ENVIRONMENT.lower() == "development"
