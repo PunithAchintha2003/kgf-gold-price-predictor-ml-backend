@@ -1,39 +1,38 @@
 """
 Main application entry point - Optimized and modular structure
 """
-import warnings
-# Suppress SyntaxWarnings from third-party libraries (e.g., textblob)
-# These warnings appear during import and don't affect functionality
-warnings.filterwarnings('ignore', category=SyntaxWarning, module='textblob')
-
-import asyncio
-import json
-from datetime import datetime
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
-from fastapi.middleware.cors import CORSMiddleware
-
-from .core.logging_config import setup_logging, get_logger
-from .core.config import settings
+from .api.v1.routes.health import set_task_manager
+from .api.v1 import api_router
+from .services.prediction_service import PredictionService
+from .services.market_data_service import MarketDataService
+from .services.exchange_service import ExchangeService
+from .repositories.prediction_repository import PredictionRepository
+from .core.dependencies import set_services
+from .core.background_tasks import (
+    broadcast_daily_data,
+    auto_update_pending_predictions
+)
+from .core.task_manager import BackgroundTaskManager
+from .core.websocket import ConnectionManager
+from .core.models import initialize_models
 from .core.database import (
     init_database,
     init_backup_database,
     init_postgresql_pool
 )
-from .core.models import initialize_models
-from .core.websocket import ConnectionManager
-from .core.task_manager import BackgroundTaskManager
-from .core.background_tasks import (
-    broadcast_daily_data,
-    auto_update_pending_predictions
-)
-from .core.dependencies import set_services
-from .repositories.prediction_repository import PredictionRepository
-from .services.exchange_service import ExchangeService
-from .services.market_data_service import MarketDataService
-from .services.prediction_service import PredictionService
-from .api.v1 import api_router
-from .api.v1.routes.health import set_task_manager
+from .core.config import settings
+from .core.logging_config import setup_logging, get_logger
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from datetime import datetime
+import json
+import asyncio
+import warnings
+# Suppress SyntaxWarnings from third-party libraries (e.g., textblob)
+# These warnings appear during import and don't affect functionality
+warnings.filterwarnings('ignore', category=SyntaxWarning, module='textblob')
+
 
 # Setup logging
 setup_logging()
@@ -147,10 +146,11 @@ async def websocket_endpoint(websocket: WebSocket):
         last_sent_data = None
         while True:
             daily_data = market_data_service.get_daily_data()
-            
+
             # Handle rate limiting - wait longer if rate limited
             if daily_data.get('status') == 'rate_limited':
-                wait_seconds = daily_data.get('rate_limit_info', {}).get('wait_seconds', 60)
+                wait_seconds = daily_data.get(
+                    'rate_limit_info', {}).get('wait_seconds', 60)
                 # Send rate limit status to client
                 if daily_data != last_sent_data:
                     await manager.send_personal_message(json.dumps(daily_data), websocket)
@@ -171,7 +171,8 @@ async def websocket_endpoint(websocket: WebSocket):
         try:
             manager.disconnect(websocket)
         except Exception as disconnect_error:
-            logger.error(f"Error disconnecting WebSocket: {disconnect_error}", exc_info=True)
+            logger.error(
+                f"Error disconnecting WebSocket: {disconnect_error}", exc_info=True)
 
 
 # Legacy endpoints (for backward compatibility)
@@ -192,7 +193,8 @@ async def get_realtime_price_legacy():
 async def get_accuracy_visualization_legacy(days: int = 90):
     """Get accuracy visualization data (legacy endpoint)"""
     try:
-        visualization_data = prediction_repo.get_accuracy_visualization_data(days=days)
+        visualization_data = prediction_repo.get_accuracy_visualization_data(
+            days=days)
         return {
             "status": "success",
             "data": visualization_data['data'],
@@ -200,7 +202,8 @@ async def get_accuracy_visualization_legacy(days: int = 90):
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        logger.error(f"Error getting accuracy visualization: {e}", exc_info=True)
+        logger.error(
+            f"Error getting accuracy visualization: {e}", exc_info=True)
         return {
             "status": "error",
             "message": str(e),
@@ -237,6 +240,70 @@ async def get_prediction_history_legacy(days: int = 30):
         }
 
 
+@app.get("/xauusd/enhanced-prediction")
+async def get_enhanced_prediction_legacy():
+    """Get enhanced prediction with model details (legacy endpoint)"""
+    try:
+        # Get current price
+        current_price_data = market_data_service.get_realtime_price()
+        current_price = current_price_data.get('current_price', 0.0)
+
+        # Try to get enhanced prediction
+        predicted_price = prediction_service.predict_next_day()
+
+        if predicted_price is None:
+            return {
+                "status": "error",
+                "message": "Unable to generate prediction",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Calculate change
+        change = predicted_price - current_price
+        change_percentage = (change / current_price *
+                             100) if current_price > 0 else 0
+
+        # Get method name and model information
+        method = prediction_service.get_model_display_name()
+        model_info = prediction_service.get_model_info()
+
+        return {
+            "status": "success",
+            "prediction": {
+                "next_day_price": round(predicted_price, 2),
+                "current_price": round(current_price, 2),
+                "change": round(change, 2),
+                "change_percentage": round(change_percentage, 2),
+                "method": method
+            },
+            "model": {
+                "name": model_info.get("active_model", "Unknown"),
+                "type": model_info.get("model_type", "Unknown"),
+                "r2_score": model_info.get("r2_score"),
+                "features": {
+                    "total": model_info.get("features_count"),
+                    "selected": model_info.get("selected_features_count"),
+                    "top_features": model_info.get("selected_features", [])[:5]
+                },
+                "fallback_available": model_info.get("fallback_available", False)
+            },
+            "sentiment": {
+                "combined_sentiment": 0.0,
+                "news_volume": 0,
+                "sentiment_trend": 0.0
+            },
+            "top_features": model_info.get("selected_features", [])[:5],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting enhanced prediction: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 @app.get("/exchange-rate/{from_currency}/{to_currency}")
 async def get_exchange_rate_legacy(from_currency: str, to_currency: str):
     """Get exchange rate between currencies (legacy endpoint)"""
@@ -251,20 +318,25 @@ async def startup_event():
     """
     try:
         logger.info(f"🚀 Server starting in {settings.environment} mode")
-        
+
         # Log system configuration
         logger.info(f"Environment: {settings.environment}")
         logger.info(f"Log Level: {settings.log_level.upper()}")
-        logger.info(f"Database: {'PostgreSQL' if settings.use_postgresql else 'SQLite'}")
-        logger.info(f"Auto-update: {'Enabled' if settings.auto_update_enabled else 'Disabled'}")
+        logger.info(
+            f"Database: {'PostgreSQL' if settings.use_postgresql else 'SQLite'}")
+        logger.info(
+            f"Auto-update: {'Enabled' if settings.auto_update_enabled else 'Disabled'}")
 
         # Log ML model information
         model_info = prediction_service.get_model_info()
-        logger.info(f"🤖 ML Model: {model_info.get('active_model', 'No Model Available')}")
+        logger.info(
+            f"🤖 ML Model: {model_info.get('active_model', 'No Model Available')}")
         if model_info.get('r2_score') is not None:
-            logger.info(f"📊 Model Accuracy (R²): {model_info['r2_score']} ({model_info['r2_score']*100:.2f}%)")
+            logger.info(
+                f"📊 Model Accuracy (R²): {model_info['r2_score']} ({model_info['r2_score']*100:.2f}%)")
         selected_count = model_info.get('selected_features_count', 0)
-        total_count = model_info.get('total_features', model_info.get('features_count', 0))
+        total_count = model_info.get(
+            'total_features', model_info.get('features_count', 0))
         if total_count > 0:
             logger.info(f"🔧 Features: {selected_count}/{total_count} selected")
         if model_info.get('selected_features'):
@@ -295,7 +367,7 @@ async def startup_event():
             logger.info("🔄 Auto-update task is disabled via configuration")
 
         logger.info("✅ Ready - API available at http://localhost:8001")
-        
+
     except Exception as e:
         logger.error(f"Failed to start application: {e}", exc_info=True)
         raise
@@ -309,13 +381,13 @@ async def shutdown_event():
     """
     try:
         logger.info("🛑 Server shutting down")
-        
+
         # Shutdown background tasks
         await task_manager.shutdown()
-        
+
         # Close WebSocket connections
         await manager.disconnect_all()
-        
+
     except Exception as e:
         logger.error(f"Error during shutdown: {e}", exc_info=True)
 

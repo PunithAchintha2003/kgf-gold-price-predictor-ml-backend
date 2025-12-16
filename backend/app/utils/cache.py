@@ -32,7 +32,7 @@ class MarketDataCache:
         self._rate_limit_until = 0  # Timestamp when rate limit expires
         # Start with configured initial backoff
         self._rate_limit_backoff = settings.rate_limit_initial_backoff
-    
+
     def is_rate_limited(self) -> Tuple[bool, float]:
         """
         Check if currently rate limited without making API calls.
@@ -68,7 +68,8 @@ class MarketDataCache:
         if current_time < self._rate_limit_until:
             wait_remaining = self._rate_limit_until - current_time
             if self._market_data_cache:
-                logger.debug(f"Rate limited. Returning cached data (wait {wait_remaining:.1f}s for fresh data)")
+                logger.debug(
+                    f"Rate limited. Returning cached data (wait {wait_remaining:.1f}s for fresh data)")
                 return self._market_data_cache.get('hist'), self._market_data_cache.get('symbol'), {
                     'rate_limited': True,
                     'until': self._rate_limit_until,
@@ -77,17 +78,21 @@ class MarketDataCache:
             else:
                 # When rate limited with no cache, extend cache timestamp to prevent repeated attempts
                 # Set cache timestamp to expire when rate limit expires to prevent cache expiration check from triggering
-                rate_limit_expiry = datetime.fromtimestamp(self._rate_limit_until)
+                rate_limit_expiry = datetime.fromtimestamp(
+                    self._rate_limit_until)
                 if self._cache_timestamp:
                     # Extend cache to expire when rate limit expires (or normal cache duration, whichever is longer)
-                    normal_expiry = self._cache_timestamp + timedelta(seconds=settings.cache_duration)
-                    self._cache_timestamp = max(rate_limit_expiry, normal_expiry)
+                    normal_expiry = self._cache_timestamp + \
+                        timedelta(seconds=settings.cache_duration)
+                    self._cache_timestamp = max(
+                        rate_limit_expiry, normal_expiry)
                 else:
                     # Set cache timestamp to expire when rate limit expires
                     self._cache_timestamp = rate_limit_expiry
                 # Only log once per minute to reduce log spam
                 if not hasattr(self, '_last_rate_limit_log') or (current_time - getattr(self, '_last_rate_limit_log', 0)) > 60:
-                    logger.info(f"Rate limited with no cached data. Will retry after {wait_remaining:.1f}s")
+                    logger.info(
+                        f"Rate limited with no cached data. Will retry after {wait_remaining:.1f}s")
                     self._last_rate_limit_log = current_time
                 return None, None, {
                     'rate_limited': True,
@@ -101,7 +106,7 @@ class MarketDataCache:
             (now - self._cache_timestamp).total_seconds() > settings.cache_duration or
             not self._market_data_cache
         )
-        
+
         if cache_expired:
 
             # Rate limiting: wait if we made a call recently (but don't block for too long)
@@ -114,7 +119,8 @@ class MarketDataCache:
                 else:
                     # If we need to wait too long, return cached data if available
                     if self._market_data_cache:
-                        logger.debug("API cooldown active, returning cached data")
+                        logger.debug(
+                            "API cooldown active, returning cached data")
                         return self._market_data_cache.get('hist'), self._market_data_cache.get('symbol'), None
 
             # Try multiple symbols for better reliability (prioritize faster ones)
@@ -160,8 +166,11 @@ class MarketDataCache:
                     self._rate_limit_backoff = min(
                         self._rate_limit_backoff * 2, 3600)  # Max 1 hour
                     self._rate_limit_until = current_time + self._rate_limit_backoff
-                    logger.warning(
-                        f"Rate limited from {symbol}. Backing off for {self._rate_limit_backoff} seconds. Error: {e}")
+                    # Only log once per minute to reduce log spam
+                    if not hasattr(self, '_last_market_rate_limit_warning') or (current_time - getattr(self, '_last_market_rate_limit_warning', 0)) > 60:
+                        logger.warning(
+                            f"Rate limited from {symbol}. Backing off for {self._rate_limit_backoff} seconds. Error: {e}")
+                        self._last_market_rate_limit_warning = current_time
                     # Don't try other symbols if rate limited - they'll likely fail too
                     break
                 except Exception as e:
@@ -172,8 +181,11 @@ class MarketDataCache:
                         self._rate_limit_backoff = min(
                             self._rate_limit_backoff * 2, 3600)
                         self._rate_limit_until = current_time + self._rate_limit_backoff
-                        logger.warning(
-                            f"Rate limited from {symbol} (detected by message). Backing off for {self._rate_limit_backoff} seconds. Error: {e}")
+                        # Only log once per minute to reduce log spam
+                        if not hasattr(self, '_last_market_rate_limit_warning') or (current_time - getattr(self, '_last_market_rate_limit_warning', 0)) > 60:
+                            logger.warning(
+                                f"Rate limited from {symbol} (detected by message). Backing off for {self._rate_limit_backoff} seconds. Error: {e}")
+                            self._last_market_rate_limit_warning = current_time
                         break
                     logger.warning(
                         f"Error fetching {symbol}: {error_name}: {e}")
@@ -183,7 +195,8 @@ class MarketDataCache:
             # If rate limited, return cached data if available
             if rate_limited:
                 if self._market_data_cache:
-                    wait_remaining = max(0, self._rate_limit_until - current_time)
+                    wait_remaining = max(
+                        0, self._rate_limit_until - current_time)
                     logger.info("Rate limited - returning cached data")
                     return self._market_data_cache.get('hist'), self._market_data_cache.get('symbol'), {
                         'rate_limited': True,
@@ -193,17 +206,21 @@ class MarketDataCache:
                 # When rate limited with no cache, extend cache timestamp to prevent repeated attempts
                 wait_remaining = max(0, self._rate_limit_until - current_time)
                 # Extend cache timestamp to prevent repeated fetch attempts until rate limit expires
-                rate_limit_expiry = datetime.fromtimestamp(self._rate_limit_until)
+                rate_limit_expiry = datetime.fromtimestamp(
+                    self._rate_limit_until)
                 if self._cache_timestamp:
                     # Extend cache to expire when rate limit expires (or normal cache duration, whichever is longer)
-                    normal_expiry = self._cache_timestamp + timedelta(seconds=settings.cache_duration)
-                    self._cache_timestamp = max(rate_limit_expiry, normal_expiry)
+                    normal_expiry = self._cache_timestamp + \
+                        timedelta(seconds=settings.cache_duration)
+                    self._cache_timestamp = max(
+                        rate_limit_expiry, normal_expiry)
                 else:
                     # Set cache timestamp to expire when rate limit expires
                     self._cache_timestamp = rate_limit_expiry
                 # Only log once per minute to reduce log spam
                 if not hasattr(self, '_last_rate_limit_log') or (current_time - getattr(self, '_last_rate_limit_log', 0)) > 60:
-                    logger.info(f"Rate limited and no cached data available. Will retry after {wait_remaining:.1f}s")
+                    logger.info(
+                        f"Rate limited and no cached data available. Will retry after {wait_remaining:.1f}s")
                     self._last_rate_limit_log = current_time
                 return None, None, {
                     'rate_limited': True,
@@ -221,28 +238,33 @@ class MarketDataCache:
     def get_realtime_price_data(self) -> Optional[dict]:
         """Get real-time price data with optimized caching"""
         now = datetime.now()
-        
+
         # Check if we're currently rate limited (before checking cache expiration)
         current_time = time.time()
         if current_time < self._rate_limit_until:
             wait_remaining = self._rate_limit_until - current_time
             if self._realtime_cache:
-                logger.debug(f"Rate limited. Returning cached realtime data (wait {wait_remaining:.1f}s for fresh data)")
+                logger.debug(
+                    f"Rate limited. Returning cached realtime data (wait {wait_remaining:.1f}s for fresh data)")
                 return self._realtime_cache
             else:
                 # Extend cache timestamp to prevent repeated checks
-                rate_limit_expiry = datetime.fromtimestamp(self._rate_limit_until)
+                rate_limit_expiry = datetime.fromtimestamp(
+                    self._rate_limit_until)
                 if self._realtime_cache_timestamp:
-                    normal_expiry = self._realtime_cache_timestamp + timedelta(seconds=settings.realtime_cache_duration)
-                    self._realtime_cache_timestamp = max(rate_limit_expiry, normal_expiry)
+                    normal_expiry = self._realtime_cache_timestamp + \
+                        timedelta(seconds=settings.realtime_cache_duration)
+                    self._realtime_cache_timestamp = max(
+                        rate_limit_expiry, normal_expiry)
                 else:
                     self._realtime_cache_timestamp = rate_limit_expiry
                 # Only log once per minute to reduce log spam
                 if not hasattr(self, '_last_realtime_rate_limit_log') or (current_time - getattr(self, '_last_realtime_rate_limit_log', 0)) > 60:
-                    logger.debug(f"Rate limited and no cached realtime data available. Wait {wait_remaining:.1f}s")
+                    logger.debug(
+                        f"Rate limited and no cached realtime data available. Wait {wait_remaining:.1f}s")
                     self._last_realtime_rate_limit_log = current_time
                 return None
-        
+
         if (self._realtime_cache_timestamp is None or
             (now - self._realtime_cache_timestamp).total_seconds() > settings.realtime_cache_duration or
                 not self._realtime_cache):
@@ -257,7 +279,8 @@ class MarketDataCache:
                     else:
                         # Return cached data if available instead of waiting
                         if self._realtime_cache:
-                            logger.debug("API cooldown active, returning cached realtime data")
+                            logger.debug(
+                                "API cooldown active, returning cached realtime data")
                             return self._realtime_cache
                         return None
 
@@ -311,8 +334,11 @@ class MarketDataCache:
                         self._rate_limit_backoff = min(
                             self._rate_limit_backoff * 2, 3600)  # Max 1 hour
                         self._rate_limit_until = current_time + self._rate_limit_backoff
-                        logger.warning(
-                            f"Rate limited from {symbol} for realtime data. Backing off for {self._rate_limit_backoff} seconds. Error: {e}")
+                        # Only log once per minute to reduce log spam
+                        if not hasattr(self, '_last_realtime_rate_limit_warning') or (current_time - getattr(self, '_last_realtime_rate_limit_warning', 0)) > 60:
+                            logger.warning(
+                                f"Rate limited from {symbol} for realtime data. Backing off for {self._rate_limit_backoff} seconds. Error: {e}")
+                            self._last_realtime_rate_limit_warning = current_time
                         break
                     except Exception as e:
                         error_name = type(e).__name__
@@ -322,8 +348,11 @@ class MarketDataCache:
                             self._rate_limit_backoff = min(
                                 self._rate_limit_backoff * 2, 3600)
                             self._rate_limit_until = current_time + self._rate_limit_backoff
-                            logger.warning(
-                                f"Rate limited from {symbol} for realtime data (detected by message). Backing off for {self._rate_limit_backoff} seconds. Error: {e}")
+                            # Only log once per minute to reduce log spam
+                            if not hasattr(self, '_last_realtime_rate_limit_warning') or (current_time - getattr(self, '_last_realtime_rate_limit_warning', 0)) > 60:
+                                logger.warning(
+                                    f"Rate limited from {symbol} for realtime data (detected by message). Backing off for {self._rate_limit_backoff} seconds. Error: {e}")
+                                self._last_realtime_rate_limit_warning = current_time
                             break
                         if symbol == symbols_to_try[-1]:
                             logger.error(
@@ -333,9 +362,17 @@ class MarketDataCache:
                 # If rate limited, return cached data if available
                 if rate_limited:
                     if self._realtime_cache:
-                        logger.info("Rate limited - returning cached realtime data")
+                        # Only log once per minute to reduce log spam
+                        if not hasattr(self, '_last_realtime_cache_log') or (current_time - getattr(self, '_last_realtime_cache_log', 0)) > 60:
+                            logger.info(
+                                "Rate limited - returning cached realtime data")
+                            self._last_realtime_cache_log = current_time
                         return self._realtime_cache
-                    logger.warning("Rate limited and no cached realtime data available")
+                    # Only log once per minute to reduce log spam
+                    if not hasattr(self, '_last_realtime_no_cache_log') or (current_time - getattr(self, '_last_realtime_no_cache_log', 0)) > 60:
+                        logger.warning(
+                            "Rate limited and no cached realtime data available")
+                        self._last_realtime_no_cache_log = current_time
                     return None
             except Exception as e:
                 logger.error(f"Error getting real-time price: {e}")
