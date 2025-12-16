@@ -31,21 +31,32 @@ def init_postgresql_pool() -> bool:
         return False
 
     try:
+        # Build connection parameters with SSL support for cloud databases
+        connection_params = {
+            'host': settings.postgresql_host,
+            'port': settings.postgresql_port,
+            'database': settings.postgresql_database,
+            'user': settings.postgresql_user,
+            'password': settings.postgresql_password,
+            # Add connection parameters to prevent stale connections
+            'connect_timeout': 10,  # 10 second connection timeout
+            'keepalives': 1,  # Enable TCP keepalives
+            'keepalives_idle': 30,  # Start keepalives after 30 seconds of idle
+            'keepalives_interval': 10,  # Send keepalive every 10 seconds
+            'keepalives_count': 3,  # Close connection after 3 failed keepalives
+        }
+
+        # Add SSL mode for cloud databases (Render, Neon.tech, Heroku, AWS, etc.)
+        # If hostname looks like a cloud database, require SSL
+        if ('render.com' in settings.postgresql_host.lower() or
+            'amazonaws.com' in settings.postgresql_host.lower() or
+            'herokuapp.com' in settings.postgresql_host.lower() or
+                'neon.tech' in settings.postgresql_host.lower()):
+            connection_params['sslmode'] = 'require'
+
         _postgresql_pool = psycopg2.pool.SimpleConnectionPool(
             1, 20,  # min and max connections
-            host=settings.postgresql_host,
-            port=settings.postgresql_port,
-            database=settings.postgresql_database,
-            user=settings.postgresql_user,
-            password=settings.postgresql_password,
-            # Add connection parameters to prevent stale connections
-            connect_timeout=10,  # 10 second connection timeout
-            keepalives=1,  # Enable TCP keepalives
-            keepalives_idle=30,  # Start keepalives after 30 seconds of idle
-            keepalives_interval=10,  # Send keepalive every 10 seconds
-            keepalives_count=3,  # Close connection after 3 failed keepalives
-            sslmode='require'  # Require SSL connection (needed for Neon.tech)
-            # Note: statement_timeout removed - not supported by Neon.tech pooled connections
+            **connection_params
         )
         if _postgresql_pool:
             logger.info(
