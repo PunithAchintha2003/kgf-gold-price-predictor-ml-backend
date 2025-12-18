@@ -305,6 +305,34 @@ async def get_enhanced_prediction_legacy():
         }
 
 
+@app.get("/xauusd/model-info")
+async def get_model_info_legacy():
+    """Get detailed ML model information (legacy endpoint)"""
+    try:
+        model_info = prediction_service.get_model_info()
+        
+        # Add explanation for the R² scores
+        r2_explanation = {
+            "training_r2_score": "Static accuracy from model training (historical test data)",
+            "live_r2_score": "Dynamic accuracy from real predictions vs actual market prices (updates automatically)",
+            "r2_score": "Primary score shown to users (uses live if available)"
+        }
+        
+        return {
+            "status": "success",
+            "model": model_info,
+            "r2_explanation": r2_explanation,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error getting model info: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 @app.get("/exchange-rate/{from_currency}/{to_currency}")
 async def get_exchange_rate_legacy(from_currency: str, to_currency: str):
     """Get exchange rate between currencies (legacy endpoint)"""
