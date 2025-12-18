@@ -3,6 +3,8 @@ import logging
 from typing import Optional
 from pathlib import Path
 
+from ..repositories.prediction_repository import PredictionRepository
+
 # Import ML models - these will be initialized in main.py
 logger = logging.getLogger(__name__)
 
@@ -89,24 +91,43 @@ class PredictionService:
             return "No Model Available"
     
     def get_model_info(self) -> dict:
-        """Get detailed information about the active model"""
+        """Get detailed information about the active model with live accuracy metrics"""
         model_info = {
             "active_model": None,
             "model_type": None,
-            "r2_score": None,
+            "training_r2_score": None,  # Static R² from model training
+            "live_r2_score": None,      # Dynamic R² from actual predictions
+            "r2_score": None,           # Primary R² score (live if available, else training)
             "features_count": None,
             "selected_features_count": None,
-            "fallback_available": False
+            "fallback_available": False,
+            "live_accuracy_stats": None  # Full live accuracy statistics
         }
+        
+        # Get live accuracy stats from database (dynamic R² based on predictions vs actual prices)
+        try:
+            prediction_repo = PredictionRepository()
+            live_stats = prediction_repo.get_accuracy_stats()
+            model_info["live_accuracy_stats"] = live_stats
+            model_info["live_r2_score"] = live_stats.get('r2_score')
+        except Exception as e:
+            logger.warning(f"Could not get live accuracy stats: {e}")
         
         # Check for News-Enhanced model
         if self.news_enhanced_predictor and self.news_enhanced_predictor.model is not None:
             model_info["active_model"] = "News-Enhanced Lasso Regression"
             model_info["model_type"] = "News-Enhanced Lasso"
-            model_info["r2_score"] = round(self.news_enhanced_predictor.best_score, 4) if hasattr(self.news_enhanced_predictor, 'best_score') and self.news_enhanced_predictor.best_score else None
+            training_r2 = round(self.news_enhanced_predictor.best_score, 4) if hasattr(self.news_enhanced_predictor, 'best_score') and self.news_enhanced_predictor.best_score else None
+            model_info["training_r2_score"] = training_r2
             model_info["features_count"] = len(self.news_enhanced_predictor.feature_columns) if hasattr(self.news_enhanced_predictor, 'feature_columns') else None
             model_info["selected_features_count"] = len(self.news_enhanced_predictor.selected_features) if hasattr(self.news_enhanced_predictor, 'selected_features') else None
             model_info["fallback_available"] = self.lasso_predictor is not None and self.lasso_predictor.model is not None
+            
+            # Primary R² score: use live if available and valid, otherwise training
+            if model_info["live_r2_score"] is not None:
+                model_info["r2_score"] = model_info["live_r2_score"]
+            else:
+                model_info["r2_score"] = training_r2
             
             # Add feature details if available
             if hasattr(self.news_enhanced_predictor, 'selected_features') and self.news_enhanced_predictor.selected_features:
@@ -117,10 +138,17 @@ class PredictionService:
         elif self.lasso_predictor and self.lasso_predictor.model is not None:
             model_info["active_model"] = "Lasso Regression"
             model_info["model_type"] = "Lasso Regression"
-            model_info["r2_score"] = round(self.lasso_predictor.best_score, 4) if hasattr(self.lasso_predictor, 'best_score') and self.lasso_predictor.best_score else None
+            training_r2 = round(self.lasso_predictor.best_score, 4) if hasattr(self.lasso_predictor, 'best_score') and self.lasso_predictor.best_score else None
+            model_info["training_r2_score"] = training_r2
             model_info["features_count"] = len(self.lasso_predictor.feature_columns) if hasattr(self.lasso_predictor, 'feature_columns') else None
             model_info["selected_features_count"] = len(self.lasso_predictor.selected_features) if hasattr(self.lasso_predictor, 'selected_features') else None
             model_info["fallback_available"] = False
+            
+            # Primary R² score: use live if available and valid, otherwise training
+            if model_info["live_r2_score"] is not None:
+                model_info["r2_score"] = model_info["live_r2_score"]
+            else:
+                model_info["r2_score"] = training_r2
             
             # Add feature details if available
             if hasattr(self.lasso_predictor, 'selected_features') and self.lasso_predictor.selected_features:

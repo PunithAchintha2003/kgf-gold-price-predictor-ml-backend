@@ -86,6 +86,20 @@ class Settings:
             os.getenv("AUTO_UPDATE_MAX_RETRIES", "3"))
         self.auto_update_retry_delay: int = int(
             os.getenv("AUTO_UPDATE_RETRY_DELAY", "300"))  # 5 minutes
+        
+        # Auto-retrain settings (daily model retraining)
+        self.auto_retrain_enabled: bool = os.getenv(
+            "AUTO_RETRAIN_ENABLED", "true").lower() == "true"
+        self.auto_retrain_interval: int = int(
+            os.getenv("AUTO_RETRAIN_INTERVAL", "86400"))  # Default: 24 hours (daily)
+        self.auto_retrain_hour: int = int(
+            os.getenv("AUTO_RETRAIN_HOUR", "2"))  # Default: 2 AM (low traffic time)
+        self.auto_retrain_startup_delay: int = int(
+            os.getenv("AUTO_RETRAIN_STARTUP_DELAY", "120"))  # Default: 2 minutes
+        self.auto_retrain_min_predictions: int = int(
+            os.getenv("AUTO_RETRAIN_MIN_PREDICTIONS", "10"))  # Minimum predictions before retrain
+        self.auto_retrain_news_days: int = int(
+            os.getenv("AUTO_RETRAIN_NEWS_DAYS", "30"))  # Days of news data for training
 
         # Validate configuration
         self._validate()
@@ -135,6 +149,17 @@ class Settings:
         if self.auto_update_max_retries < 0:
             errors.append(
                 f"AUTO_UPDATE_MAX_RETRIES must be non-negative, got {self.auto_update_max_retries}")
+        
+        # Validate auto-retrain settings
+        if self.auto_retrain_interval < 3600:  # At least 1 hour
+            errors.append(
+                f"AUTO_RETRAIN_INTERVAL must be at least 3600 seconds (1 hour), got {self.auto_retrain_interval}")
+        if self.auto_retrain_hour < 0 or self.auto_retrain_hour > 23:
+            errors.append(
+                f"AUTO_RETRAIN_HOUR must be between 0 and 23, got {self.auto_retrain_hour}")
+        if self.auto_retrain_min_predictions < 1:
+            errors.append(
+                f"AUTO_RETRAIN_MIN_PREDICTIONS must be at least 1, got {self.auto_retrain_min_predictions}")
 
         # Warn about production settings
         if self.environment == "production":

@@ -119,8 +119,18 @@ def main():
         
         model_info = prediction_service.get_model_info()
         print(f"🤖 ML Model: {model_info.get('active_model', 'No Model Available')}")
-        if model_info.get('r2_score') is not None:
-            print(f"📊 Model Accuracy (R²): {model_info['r2_score']} ({model_info['r2_score']*100:.2f}%)")
+        
+        # Show both R² scores clearly
+        training_r2 = model_info.get('training_r2_score')
+        live_r2 = model_info.get('live_r2_score')
+        
+        if training_r2 is not None:
+            print(f"📊 Training R² (from model): {training_r2:.4f} ({training_r2*100:.2f}%)")
+        if live_r2 is not None:
+            live_stats = model_info.get('live_accuracy_stats', {})
+            eval_count = live_stats.get('evaluated_predictions', 0)
+            print(f"📈 Live R² (from {eval_count} predictions): {live_r2:.4f} ({live_r2*100:.2f}%)")
+        
         selected_count = model_info.get('selected_features_count', 0)
         total_count = model_info.get('total_features', model_info.get('features_count', 0))
         if total_count > 0:
