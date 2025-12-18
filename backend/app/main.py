@@ -10,7 +10,8 @@ from .repositories.prediction_repository import PredictionRepository
 from .core.dependencies import set_services
 from .core.background_tasks import (
     broadcast_daily_data,
-    auto_update_pending_predictions
+    auto_update_pending_predictions,
+    auto_retrain_model
 )
 from .core.task_manager import BackgroundTaskManager
 from .core.websocket import ConnectionManager
@@ -331,9 +332,18 @@ async def startup_event():
         model_info = prediction_service.get_model_info()
         logger.info(
             f"🤖 ML Model: {model_info.get('active_model', 'No Model Available')}")
-        if model_info.get('r2_score') is not None:
-            logger.info(
-                f"📊 Model Accuracy (R²): {model_info['r2_score']} ({model_info['r2_score']*100:.2f}%)")
+        
+        # Show both R² scores clearly
+        training_r2 = model_info.get('training_r2_score')
+        live_r2 = model_info.get('live_r2_score')
+        
+        if training_r2 is not None:
+            logger.info(f"📊 Training R² (from model): {training_r2:.4f} ({training_r2*100:.2f}%)")
+        if live_r2 is not None:
+            live_stats = model_info.get('live_accuracy_stats', {})
+            eval_count = live_stats.get('evaluated_predictions', 0)
+            logger.info(f"📈 Live R² (from {eval_count} predictions): {live_r2:.4f} ({live_r2*100:.2f}%)")
+        
         selected_count = model_info.get('selected_features_count', 0)
         total_count = model_info.get(
             'total_features', model_info.get('features_count', 0))
@@ -365,6 +375,21 @@ async def startup_event():
                 f"🔄 Auto-update task started: pending predictions will be updated every {settings.auto_update_interval}s")
         else:
             logger.info("🔄 Auto-update task is disabled via configuration")
+
+        # Start auto-retrain task (daily model retraining)
+        if settings.auto_retrain_enabled:
+            retrain_task = asyncio.create_task(
+                auto_retrain_model(
+                    prediction_service, prediction_repo, task_manager
+                )
+            )
+            task_manager.register_task(
+                "auto_retrain_model", retrain_task
+            )
+            logger.info(
+                f"🤖 Auto-retrain task started: model will retrain daily at {settings.auto_retrain_hour}:00")
+        else:
+            logger.info("🤖 Auto-retrain task is disabled via configuration")
 
         logger.info("✅ Ready - API available at http://localhost:8001")
 

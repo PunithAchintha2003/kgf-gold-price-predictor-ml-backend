@@ -77,13 +77,16 @@ async def get_enhanced_prediction(
             "model": {
                 "name": model_info.get("active_model", "Unknown"),
                 "type": model_info.get("model_type", "Unknown"),
-                "r2_score": model_info.get("r2_score"),
+                "r2_score": model_info.get("r2_score"),  # Primary (live if available)
+                "training_r2_score": model_info.get("training_r2_score"),  # Static from training
+                "live_r2_score": model_info.get("live_r2_score"),  # Dynamic from predictions
                 "features": {
                     "total": model_info.get("features_count"),
                     "selected": model_info.get("selected_features_count"),
                     "top_features": model_info.get("selected_features", [])[:5]  # Top 5 features
                 },
-                "fallback_available": model_info.get("fallback_available", False)
+                "fallback_available": model_info.get("fallback_available", False),
+                "live_accuracy_stats": model_info.get("live_accuracy_stats")  # Full live stats
             },
             "sentiment": {
                 "combined_sentiment": 0.0,  # Placeholder - would need news analyzer
@@ -133,12 +136,28 @@ async def get_accuracy_visualization(
 async def get_model_info(
     prediction_service=Depends(get_prediction_service)
 ):
-    """Get detailed information about the active ML model"""
+    """Get detailed information about the active ML model with live accuracy metrics
+    
+    Returns:
+        - training_r2_score: Static R² from when model was trained (doesn't change)
+        - live_r2_score: Dynamic R² calculated from actual predictions vs real prices (updates with each prediction)
+        - r2_score: Primary score (live if available, otherwise training)
+        - live_accuracy_stats: Full live accuracy statistics including average_accuracy, total_predictions, etc.
+    """
     try:
         model_info = prediction_service.get_model_info()
+        
+        # Add explanation for the R² scores
+        r2_explanation = {
+            "training_r2_score": "Static accuracy from model training (historical test data)",
+            "live_r2_score": "Dynamic accuracy from real predictions vs actual market prices (updates automatically)",
+            "r2_score": "Primary score shown to users (uses live if available)"
+        }
+        
         return {
             "status": "success",
             "model": model_info,
+            "r2_explanation": r2_explanation,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -316,4 +335,116 @@ async def get_prediction_history(
         return {
             "status": "error",
             "message": str(e)
+        }
+
+
+@router.post("/retrain-model")
+async def retrain_model_now(
+    prediction_service=Depends(get_prediction_service),
+    prediction_repo=Depends(get_prediction_repo)
+):
+    """Manually trigger model retraining
+    
+    This will:
+    1. Fetch fresh market data
+    2. Fetch news sentiment data
+    3. Retrain the News-Enhanced Lasso model
+    4. Reload the model in-memory
+    
+    Note: This can take several minutes to complete.
+    """
+    try:
+        from ....core.logging_config import get_logger
+        from ....core.background_tasks import _perform_model_retrain
+        from ....core.config import settings
+        
+        logger = get_logger(__name__)
+        logger.info("🔄 Manual model retrain triggered via API")
+        
+        # Perform retraining
+        result = await _perform_model_retrain(
+            prediction_service,
+            settings.auto_retrain_news_days
+        )
+        
+        if result["success"]:
+            return {
+                "status": "success",
+                "message": "Both models retrained successfully",
+                "data": {
+                    "primary_model": {
+                        "name": "News-Enhanced Lasso",
+                        "r2_score": result.get("r2_score"),
+                        "features_selected": result.get("features_selected"),
+                        "total_features": result.get("total_features")
+                    },
+                    "fallback_model": {
+                        "name": "Lasso Regression",
+                        "r2_score": result.get("fallback_r2_score")
+                    },
+                    "models_trained": result.get("models_trained", []),
+                    "trained_at": result.get("trained_at")
+                },
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Model retraining failed: {result.get('error')}",
+                "timestamp": datetime.now().isoformat()
+            }
+    except Exception as e:
+        from ....core.logging_config import get_logger
+        logger = get_logger(__name__)
+        logger.error(f"Error during manual retrain: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+@router.get("/retrain-status")
+async def get_retrain_status():
+    """Get the status of the auto-retrain background task"""
+    try:
+        from ....core.config import settings
+        from ....api.v1.routes.health import get_task_manager
+        
+        task_manager = get_task_manager()
+        
+        if task_manager is None:
+            return {
+                "status": "error",
+                "message": "Task manager not available",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Get retrain task state
+        retrain_state = task_manager.task_states.get("auto_retrain_model", {})
+        
+        return {
+            "status": "success",
+            "data": {
+                "enabled": settings.auto_retrain_enabled,
+                "scheduled_hour": settings.auto_retrain_hour,
+                "interval_hours": settings.auto_retrain_interval // 3600,
+                "task_status": retrain_state.get("status", "not_started"),
+                "last_run": retrain_state.get("last_run"),
+                "last_retrain": retrain_state.get("last_retrain"),
+                "last_r2_score": retrain_state.get("last_r2_score"),
+                "retrain_count": retrain_state.get("retrain_count", 0),
+                "error_count": retrain_state.get("error_count", 0),
+                "last_error": retrain_state.get("last_error")
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        from ....core.logging_config import get_logger
+        logger = get_logger(__name__)
+        logger.error(f"Error getting retrain status: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e),
+            "timestamp": datetime.now().isoformat()
         }
