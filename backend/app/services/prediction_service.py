@@ -41,28 +41,44 @@ class PredictionService:
                     if not market_data:
                         raise ValueError("Failed to fetch market data")
 
-                    # Fetch news sentiment
-                    sentiment_features = self.news_enhanced_predictor.fetch_and_analyze_news(
-                        days_back=7)
+                    # Fetch news sentiment (with timeout and error handling)
+                    try:
+                        sentiment_features = self.news_enhanced_predictor.fetch_and_analyze_news(
+                            days_back=7)
+                        logger.debug(f"Fetched sentiment features: {sentiment_features.shape if hasattr(sentiment_features, 'shape') else 'empty'}")
+                    except Exception as news_error:
+                        logger.warning(f"⚠️  News sentiment fetch failed: {news_error}. Continuing with base features only.")
+                        sentiment_features = None
 
-                    # Create enhanced features
-                    enhanced_features = self.news_enhanced_predictor.create_enhanced_features(
-                        market_data, sentiment_features)
+                    # Create enhanced features (will use base features if sentiment is None)
+                    try:
+                        enhanced_features = self.news_enhanced_predictor.create_enhanced_features(
+                            market_data, sentiment_features)
 
-                    if enhanced_features.empty:
-                        raise ValueError("No enhanced features created")
+                        if enhanced_features.empty:
+                            raise ValueError("No enhanced features created")
 
-                    # Make prediction using News-Enhanced model
-                    prediction = self.news_enhanced_predictor.predict_with_news(
-                        enhanced_features)
+                        # Make prediction using News-Enhanced model
+                        prediction = self.news_enhanced_predictor.predict_with_news(
+                            enhanced_features)
 
-                    if prediction is not None:
-                        logger.info(
-                            "✅ Successfully used News-Enhanced Lasso model (Primary) for prediction")
-                        return float(prediction)
+                        if prediction is not None:
+                            import math
+                            # Check for valid numeric value (not NaN, not inf)
+                            if isinstance(prediction, (int, float)) and math.isfinite(prediction):
+                                logger.info(
+                                    "✅ Successfully used News-Enhanced Lasso model (Primary) for prediction")
+                                return float(prediction)
+                            else:
+                                raise ValueError(f"Invalid prediction value: {prediction}")
+                        else:
+                            raise ValueError("Prediction returned None")
+                    except Exception as feature_error:
+                        logger.warning(f"⚠️  Enhanced feature creation or prediction failed: {feature_error}")
+                        raise
                 except Exception as e:
                     logger.warning(
-                        f"⚠️  News-Enhanced Lasso (Primary) prediction failed: {e}")
+                        f"⚠️  News-Enhanced Lasso (Primary) prediction failed: {e}", exc_info=True)
                     logger.info("🔄 Falling back to Basic Lasso Regression...")
 
             # FALLBACK: Use Basic Lasso Regression if News-Enhanced fails or unavailable
@@ -87,11 +103,18 @@ class PredictionService:
                         features_df)
 
                     if prediction is not None:
-                        logger.info(
-                            "✅ Using Basic Lasso Regression (Fallback) for prediction")
-                        return float(prediction)
+                        import math
+                        # Check for valid numeric value (not NaN, not inf)
+                        if isinstance(prediction, (int, float)) and math.isfinite(prediction):
+                            logger.info(
+                                "✅ Using Basic Lasso Regression (Fallback) for prediction")
+                            return float(prediction)
+                        else:
+                            logger.warning(f"⚠️  Basic Lasso Regression returned invalid prediction: {prediction}")
+                    else:
+                        logger.warning("⚠️  Basic Lasso Regression returned None")
                 except Exception as e:
-                    logger.warning(f"⚠️  Basic Lasso Regression (Fallback) prediction failed: {e}")
+                    logger.warning(f"⚠️  Basic Lasso Regression (Fallback) prediction failed: {e}", exc_info=True)
 
             logger.error("❌ No prediction model available - both News-Enhanced and Basic Lasso failed")
             return None

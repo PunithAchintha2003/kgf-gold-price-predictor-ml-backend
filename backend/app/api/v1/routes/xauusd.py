@@ -51,18 +51,69 @@ async def get_enhanced_prediction(
     prediction_service=Depends(get_prediction_service)
 ):
     """Get enhanced prediction with news sentiment analysis"""
+    from ....core.logging_config import get_logger
+    logger = get_logger(__name__)
+    
     try:
-        # Get current price
-        current_price_data = market_data_service.get_realtime_price()
-        current_price = current_price_data.get('current_price', 0.0)
-
-        # Try to get enhanced prediction
-        predicted_price = prediction_service.predict_next_day()
-
-        if predicted_price is None:
+        # Check if prediction service is available
+        if prediction_service is None:
+            logger.error("Prediction service is not available")
             return {
                 "status": "error",
-                "message": "Unable to generate prediction",
+                "message": "Prediction service is not initialized. Please check backend logs.",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Get current price
+        try:
+            current_price_data = market_data_service.get_realtime_price()
+            current_price = current_price_data.get('current_price', 0.0)
+            
+            if current_price <= 0:
+                logger.warning(f"Invalid current price: {current_price}")
+                return {
+                    "status": "error",
+                    "message": "Unable to fetch current market price. Please try again later.",
+                    "timestamp": datetime.now().isoformat()
+                }
+        except Exception as e:
+            logger.error(f"Error fetching current price: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "message": f"Error fetching current market price: {str(e)}",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Try to get enhanced prediction
+        try:
+            predicted_price = prediction_service.predict_next_day()
+        except Exception as e:
+            logger.error(f"Error generating prediction: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "message": f"Error generating prediction: {str(e)}",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        if predicted_price is None:
+            # Check which models are available for better error message
+            has_enhanced = prediction_service.news_enhanced_predictor is not None and prediction_service.news_enhanced_predictor.model is not None
+            has_lasso = prediction_service.lasso_predictor is not None and prediction_service.lasso_predictor.model is not None
+            
+            logger.error(f"Prediction service returned None. Enhanced model: {'available' if has_enhanced else 'unavailable'}, Lasso model: {'available' if has_lasso else 'unavailable'}")
+            
+            if not has_enhanced and not has_lasso:
+                error_msg = "No ML models are available. Please ensure model files are present and check backend logs for initialization errors."
+            elif has_enhanced and not has_lasso:
+                error_msg = "Enhanced model is available but prediction failed. Please check backend logs for details."
+            elif not has_enhanced and has_lasso:
+                error_msg = "Enhanced model is not available, and fallback model also failed. Please check backend logs."
+            else:
+                error_msg = "Both models are available but prediction failed. Please check backend logs for details."
+            
+            return {
+                "status": "error",
+                "message": error_msg,
                 "timestamp": datetime.now().isoformat()
             }
 
@@ -72,8 +123,13 @@ async def get_enhanced_prediction(
                              100) if current_price > 0 else 0
 
         # Get method name and model information
-        method = prediction_service.get_model_display_name()
-        model_info = prediction_service.get_model_info()
+        try:
+            method = prediction_service.get_model_display_name()
+            model_info = prediction_service.get_model_info()
+        except Exception as e:
+            logger.error(f"Error getting model info: {e}", exc_info=True)
+            method = "Unknown"
+            model_info = {}
 
         return {
             "status": "success",
@@ -107,12 +163,10 @@ async def get_enhanced_prediction(
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        from ....core.logging_config import get_logger
-        logger = get_logger(__name__)
-        logger.error(f"Error getting enhanced prediction: {e}", exc_info=True)
+        logger.error(f"Unexpected error getting enhanced prediction: {e}", exc_info=True)
         return {
             "status": "error",
-            "message": str(e),
+            "message": f"Unexpected error: {str(e)}",
             "timestamp": datetime.now().isoformat()
         }
 
@@ -123,8 +177,52 @@ async def get_accuracy_visualization(
     prediction_repo=Depends(get_prediction_repo)
 ):
     """Get accuracy statistics for visualization"""
+    from ....core.logging_config import get_logger
+    logger = get_logger(__name__)
+    
     try:
-        visualization_data = prediction_repo.get_accuracy_visualization_data(days=days)
+        # Check if prediction repo is available
+        if prediction_repo is None:
+            logger.error("Prediction repository is not available")
+            return {
+                "status": "error",
+                "message": "Prediction repository is not initialized. Please check backend logs.",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Validate days parameter
+        if days < 1 or days > 365:
+            days = 90  # Default to 90 days if invalid
+            logger.warning(f"Invalid days parameter, using default: 90")
+
+        # Get visualization data
+        try:
+            visualization_data = prediction_repo.get_accuracy_visualization_data(days=days)
+        except Exception as e:
+            logger.error(f"Error getting accuracy visualization data: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "message": f"Error retrieving accuracy data: {str(e)}",
+                "timestamp": datetime.now().isoformat()
+            }
+
+        # Check if data is empty
+        if not visualization_data or not visualization_data.get('data'):
+            logger.info(f"No accuracy data available for the last {days} days")
+            return {
+                "status": "success",
+                "data": [],
+                "statistics": {
+                    "average_accuracy": 0.0,
+                    "min_accuracy": 0.0,
+                    "max_accuracy": 0.0,
+                    "average_error": 0.0,
+                    "total_predictions": 0
+                },
+                "message": f"No accuracy data available yet. The chart will appear once predictions are evaluated with actual prices.",
+                "timestamp": datetime.now().isoformat()
+            }
+
         return {
             "status": "success",
             "data": visualization_data['data'],
@@ -132,12 +230,10 @@ async def get_accuracy_visualization(
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        from ....core.logging_config import get_logger
-        logger = get_logger(__name__)
-        logger.error(f"Error getting accuracy visualization: {e}", exc_info=True)
+        logger.error(f"Unexpected error getting accuracy visualization: {e}", exc_info=True)
         return {
             "status": "error",
-            "message": str(e),
+            "message": f"Unexpected error: {str(e)}",
             "timestamp": datetime.now().isoformat()
         }
 
