@@ -12,6 +12,7 @@ from ....core.dependencies import (
 router = APIRouter()
 
 
+@router.get("/")
 @router.get("")
 async def get_daily_data(
     days: int = 90,
