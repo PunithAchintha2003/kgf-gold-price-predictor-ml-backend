@@ -16,11 +16,21 @@ router = APIRouter()
 @router.get("")
 async def get_daily_data(
     days: int = 90,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     market_data_service=Depends(get_market_data_service),
     prediction_service=Depends(get_prediction_service)
 ):
-    """Get XAU/USD daily data with model information"""
-    data = market_data_service.get_daily_data(days=days)
+    """Get XAU/USD daily data with model information
+    
+    Args:
+        days: Number of days to fetch (default: 90)
+        start_date: Optional start date in YYYY-MM-DD format
+        end_date: Optional end date in YYYY-MM-DD format
+        
+    Note: If start_date/end_date are provided, they take precedence over days parameter
+    """
+    data = market_data_service.get_daily_data(days=days, start_date=start_date, end_date=end_date)
     # Add model info if not already present
     if isinstance(data, dict) and "model_info" not in data:
         data["model_info"] = prediction_service.get_model_info()
