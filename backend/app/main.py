@@ -291,13 +291,16 @@ async def get_enhanced_prediction_legacy():
             "model": {
                 "name": model_info.get("active_model", "Unknown"),
                 "type": model_info.get("model_type", "Unknown"),
-                "r2_score": model_info.get("r2_score"),
+                "r2_score": model_info.get("r2_score"),  # Primary (live if available)
+                "training_r2_score": model_info.get("training_r2_score"),  # Static from training
+                "live_r2_score": model_info.get("live_r2_score"),  # Dynamic from predictions
                 "features": {
                     "total": model_info.get("features_count"),
                     "selected": model_info.get("selected_features_count"),
-                    "top_features": model_info.get("selected_features", [])[:5]
+                    "top_features": model_info.get("selected_features", [])[:5]  # Top 5 features
                 },
-                "fallback_available": model_info.get("fallback_available", False)
+                "fallback_available": model_info.get("fallback_available", False),
+                "live_accuracy_stats": model_info.get("live_accuracy_stats")  # Full live stats
             },
             "sentiment": {
                 "combined_sentiment": 0.0,
