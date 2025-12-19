@@ -333,6 +333,36 @@ async def get_model_info_legacy():
         }
 
 
+@app.get("/xauusd/prediction-stats")
+async def get_prediction_stats_legacy():
+    """Get comprehensive prediction statistics (legacy endpoint)"""
+    try:
+        stats = prediction_repo.get_comprehensive_stats()
+        return {
+            "status": "success",
+            "data": {
+                "total_predictions": stats['total_predictions'],
+                "evaluated": {
+                    "count": stats['evaluated_predictions'],
+                    "with_results": stats['evaluated_predictions'],
+                    "average_accuracy": stats['average_accuracy']
+                },
+                "pending": {
+                    "count": stats['pending_predictions'],
+                    "awaiting_market_results": stats['pending_predictions']
+                },
+                "r2_score": stats.get('r2_score'),
+                "evaluation_rate_percent": stats['evaluation_rate']
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting prediction stats: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
 @app.get("/exchange-rate/{from_currency}/{to_currency}")
 async def get_exchange_rate_legacy(from_currency: str, to_currency: str):
     """Get exchange rate between currencies (legacy endpoint)"""
