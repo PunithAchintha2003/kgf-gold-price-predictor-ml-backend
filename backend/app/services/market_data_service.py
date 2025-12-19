@@ -65,7 +65,8 @@ class MarketDataService:
                     try:
                         all_historical_predictions = self.prediction_repo.get_historical_predictions(days)
                         accuracy_stats = self.prediction_repo.get_accuracy_stats()
-                    except:
+                    except Exception as e:
+                        logger.debug(f"Error getting historical predictions during rate limit: {e}")
                         all_historical_predictions = []
                         accuracy_stats = {
                             'average_accuracy': 0.0,
@@ -108,20 +109,52 @@ class MarketDataService:
             prediction_method = None
 
             try:
-                if not self.prediction_repo.prediction_exists_for_date(next_day):
+                # Get current model info to check if News-Enhanced is primary
+                model_info = self.prediction_service.get_model_info()
+                current_model_type = model_info.get("model_type", "")
+                is_news_enhanced_primary = "News-Enhanced" in current_model_type or "News-Enhanced" in model_info.get("active_model", "")
+                
+                # Always generate fresh prediction if News-Enhanced is primary
+                # (to ensure we use latest news sentiment which changes frequently)
+                # Otherwise, use stored prediction if available
+                if is_news_enhanced_primary:
+                    # News-Enhanced model: Always generate fresh prediction
                     predicted_price = self.prediction_service.predict_next_day()
                     if predicted_price:
                         prediction_method = self.prediction_service.get_model_display_name()
+                        # Update or create the prediction in database
                         self.prediction_repo.save_prediction(
                             next_day, predicted_price, prediction_method=prediction_method
                         )
                         logger.debug(
-                            f"Created prediction for next trading day: {next_day}")
+                            f"Generated fresh News-Enhanced prediction for next trading day: {next_day} = ${predicted_price:.2f}")
                 else:
-                    predicted_price = self.prediction_repo.get_prediction_for_date(
-                        next_day)
+                    # Basic Lasso model: Use stored prediction if available, otherwise generate new
+                    if self.prediction_repo.prediction_exists_for_date(next_day):
+                        predicted_price = self.prediction_repo.get_prediction_for_date(next_day)
+                        prediction_method = self.prediction_service.get_model_display_name()
+                        logger.debug(
+                            f"Using stored prediction for next trading day: {next_day} = ${predicted_price:.2f}")
+                    else:
+                        # No stored prediction, generate new one
+                        predicted_price = self.prediction_service.predict_next_day()
+                        if predicted_price:
+                            prediction_method = self.prediction_service.get_model_display_name()
+                            self.prediction_repo.save_prediction(
+                                next_day, predicted_price, prediction_method=prediction_method
+                            )
+                            logger.debug(
+                                f"Generated new prediction for next trading day: {next_day} = ${predicted_price:.2f}")
             except Exception as e:
                 logger.warning(f"Prediction check failed: {e}")
+                # Fallback: try to get stored prediction if available
+                try:
+                    if self.prediction_repo.prediction_exists_for_date(next_day):
+                        predicted_price = self.prediction_repo.get_prediction_for_date(next_day)
+                        prediction_method = self.prediction_service.get_model_display_name()
+                except Exception as e:
+                    logger.debug(f"Error checking existing prediction: {e}")
+                    pass
 
             # Get historical predictions and accuracy stats
             all_historical_predictions = self.prediction_repo.get_historical_predictions(
@@ -341,7 +374,8 @@ class MarketDataService:
                 all_historical_predictions = self.prediction_repo.get_historical_predictions(
                     days)
                 accuracy_stats = self.prediction_repo.get_accuracy_stats()
-            except:
+            except Exception as e:
+                logger.debug(f"Error getting historical predictions: {e}")
                 all_historical_predictions = []
                 accuracy_stats = {
                     'average_accuracy': 0.0,

@@ -69,7 +69,8 @@ class PredictionRepository:
                         cursor.execute("PRAGMA table_info(predictions)")
                         columns = [row[1] for row in cursor.fetchall()]
                         has_prediction_method = 'prediction_method' in columns
-                    except:
+                    except Exception as e:
+                        logger.debug(f"Error checking for prediction_method column: {e}")
                         has_prediction_method = False
 
                     if has_prediction_method:
@@ -197,7 +198,8 @@ class PredictionRepository:
                 try:
                     date_obj = datetime.strptime(date_value, '%Y-%m-%d')
                     weekday = date_obj.weekday()
-                except:
+                except (ValueError, TypeError) as e:
+                    logger.debug(f"Error parsing date '{date_value}': {e}")
                     weekday = None
             else:
                 date_str = str(date_value)
@@ -461,7 +463,8 @@ class PredictionRepository:
                 try:
                     date_obj = datetime.strptime(date_value, '%Y-%m-%d')
                     weekday = date_obj.weekday()
-                except:
+                except (ValueError, TypeError) as e:
+                    logger.debug(f"Error parsing date '{date_value}': {e}")
                     weekday = None
             else:
                 date_str = str(date_value)
@@ -790,7 +793,8 @@ class PredictionRepository:
                 from datetime import datetime
                 try:
                     date_obj = datetime.strptime(date_str, '%Y-%m-%d')
-                except:
+                except (ValueError, TypeError) as e:
+                    logger.debug(f"Error parsing date '{date_str}': {e}")
                     continue
 
             # Skip weekends - don't include Saturday/Sunday in pending predictions

@@ -20,7 +20,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Lasso
 from sklearn.metrics import mean_squared_error, r2_score
 import joblib
-import warnings
 import sys
 from pathlib import Path
 
@@ -170,7 +169,8 @@ class NewsSentimentAnalyzer:
                             'source': 'Yahoo Finance',
                             'url': item.get('link', '')
                         })
-                except:
+                except Exception as e:
+                    logger.debug(f"Error processing Yahoo Finance news item: {e}")
                     continue
 
             logger.info(
@@ -402,31 +402,36 @@ class NewsEnhancedLassoPredictor:
     def fetch_and_analyze_news(self, days_back: int = 30) -> pd.DataFrame:
         """
         Fetch and analyze news data for sentiment features
+        Returns empty DataFrame if news fetching fails (graceful degradation)
         """
-        logger.info(
-            f"Fetching and analyzing news data for the last {days_back} days")
+        try:
+            logger.info(
+                f"Fetching and analyzing news data for the last {days_back} days")
 
-        # Fetch news data
-        news_data = self.news_analyzer.fetch_news_data(days_back)
+            # Fetch news data
+            news_data = self.news_analyzer.fetch_news_data(days_back)
 
-        if not news_data:
-            logger.warning("No news data fetched")
+            if not news_data:
+                logger.warning("No news data fetched - will use base features only")
+                return pd.DataFrame()
+
+            # Analyze sentiment
+            sentiment_df = self.news_analyzer.analyze_sentiment(news_data)
+
+            if sentiment_df.empty:
+                logger.warning("No sentiment data generated - will use base features only")
+                return pd.DataFrame()
+
+            # Create sentiment features
+            self.sentiment_features = self.news_analyzer.create_sentiment_features(
+                sentiment_df)
+
+            logger.info(
+                f"Created sentiment features with shape: {self.sentiment_features.shape}")
+            return self.sentiment_features
+        except Exception as e:
+            logger.warning(f"Error fetching/analyzing news: {e}. Will use base features only.")
             return pd.DataFrame()
-
-        # Analyze sentiment
-        sentiment_df = self.news_analyzer.analyze_sentiment(news_data)
-
-        if sentiment_df.empty:
-            logger.warning("No sentiment data generated")
-            return pd.DataFrame()
-
-        # Create sentiment features
-        self.sentiment_features = self.news_analyzer.create_sentiment_features(
-            sentiment_df)
-
-        logger.info(
-            f"Created sentiment features with shape: {self.sentiment_features.shape}")
-        return self.sentiment_features
 
     def create_enhanced_features(self, market_data: Dict, sentiment_df: pd.DataFrame = None) -> pd.DataFrame:
         """
