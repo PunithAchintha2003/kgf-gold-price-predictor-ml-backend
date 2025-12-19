@@ -17,13 +17,27 @@ class PredictionService:
         self.news_enhanced_predictor = news_enhanced_predictor
 
     def predict_next_day(self) -> Optional[float]:
-        """Predict next day price using available models"""
+        """
+        Predict next day price using available models.
+        Primary: News-Enhanced Lasso Regression
+        Fallback: Basic Lasso Regression (if enhanced model fails or unavailable)
+        """
         try:
-            # Try News-Enhanced Lasso model first
+            # PRIMARY: Try News-Enhanced Lasso model first
             if self.news_enhanced_predictor and self.news_enhanced_predictor.model is not None:
                 try:
-                    # Get fresh market data
-                    market_data = self.lasso_predictor.fetch_market_data()
+                    logger.info("🔄 Attempting prediction with News-Enhanced Lasso (Primary)...")
+                    
+                    # Get fresh market data (can use either predictor for this)
+                    market_data = None
+                    if self.lasso_predictor and self.lasso_predictor.model is not None:
+                        market_data = self.lasso_predictor.fetch_market_data()
+                    else:
+                        # If lasso_predictor not available, create a temporary one just for fetching data
+                        from models.lasso_model import LassoGoldPredictor
+                        temp_predictor = LassoGoldPredictor()
+                        market_data = temp_predictor.fetch_market_data()
+                    
                     if not market_data:
                         raise ValueError("Failed to fetch market data")
 
@@ -44,14 +58,18 @@ class PredictionService:
 
                     if prediction is not None:
                         logger.info(
-                            "🤖 Using News-Enhanced Lasso model for prediction")
+                            "✅ Successfully used News-Enhanced Lasso model (Primary) for prediction")
                         return float(prediction)
                 except Exception as e:
-                    logger.warning(f"News-Enhanced prediction failed: {e}")
+                    logger.warning(
+                        f"⚠️  News-Enhanced Lasso (Primary) prediction failed: {e}")
+                    logger.info("🔄 Falling back to Basic Lasso Regression...")
 
-            # Fallback to Lasso Regression
+            # FALLBACK: Use Basic Lasso Regression if News-Enhanced fails or unavailable
             if self.lasso_predictor and self.lasso_predictor.model is not None:
                 try:
+                    logger.info("🔄 Attempting prediction with Basic Lasso Regression (Fallback)...")
+                    
                     # Get fresh market data
                     market_data = self.lasso_predictor.fetch_market_data()
                     if not market_data:
@@ -70,21 +88,21 @@ class PredictionService:
 
                     if prediction is not None:
                         logger.info(
-                            "🤖 Using Lasso Regression model for prediction")
+                            "✅ Using Basic Lasso Regression (Fallback) for prediction")
                         return float(prediction)
                 except Exception as e:
-                    logger.warning(f"Lasso prediction failed: {e}")
+                    logger.warning(f"⚠️  Basic Lasso Regression (Fallback) prediction failed: {e}")
 
-            logger.error("No prediction model available")
+            logger.error("❌ No prediction model available - both News-Enhanced and Basic Lasso failed")
             return None
         except Exception as e:
-            logger.error(f"Error in prediction: {e}", exc_info=True)
+            logger.error(f"❌ Error in prediction: {e}", exc_info=True)
             return None
 
     def get_model_display_name(self) -> str:
         """Get the display name for the current ML model"""
         if self.news_enhanced_predictor and self.news_enhanced_predictor.model is not None:
-            return "News-Enhanced Lasso Regression"
+            return "News-Enhanced Lasso Regression (Primary)"
         elif self.lasso_predictor and self.lasso_predictor.model is not None:
             return "Lasso Regression (Fallback)"
         else:
@@ -113,9 +131,9 @@ class PredictionService:
         except Exception as e:
             logger.warning(f"Could not get live accuracy stats: {e}")
         
-        # Check for News-Enhanced model
+        # Check for News-Enhanced model (Primary)
         if self.news_enhanced_predictor and self.news_enhanced_predictor.model is not None:
-            model_info["active_model"] = "News-Enhanced Lasso Regression"
+            model_info["active_model"] = "News-Enhanced Lasso Regression (Primary)"
             model_info["model_type"] = "News-Enhanced Lasso"
             training_r2 = round(self.news_enhanced_predictor.best_score, 4) if hasattr(self.news_enhanced_predictor, 'best_score') and self.news_enhanced_predictor.best_score else None
             model_info["training_r2_score"] = training_r2
@@ -136,7 +154,7 @@ class PredictionService:
             
         # Check for Lasso Regression fallback
         elif self.lasso_predictor and self.lasso_predictor.model is not None:
-            model_info["active_model"] = "Lasso Regression"
+            model_info["active_model"] = "Lasso Regression (Fallback)"
             model_info["model_type"] = "Lasso Regression"
             training_r2 = round(self.lasso_predictor.best_score, 4) if hasattr(self.lasso_predictor, 'best_score') and self.lasso_predictor.best_score else None
             model_info["training_r2_score"] = training_r2
