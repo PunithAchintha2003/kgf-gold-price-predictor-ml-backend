@@ -55,7 +55,7 @@ def init_postgresql_pool() -> bool:
             connection_params['sslmode'] = 'require'
 
         _postgresql_pool = psycopg2.pool.SimpleConnectionPool(
-            1, 20,  # min and max connections
+            2, 50,  # min and max connections (increased to handle concurrent requests)
             **connection_params
         )
         if _postgresql_pool:
@@ -119,22 +119,50 @@ def _is_connection_alive(conn) -> bool:
 
 
 @contextmanager
-def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3):
+def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3, timeout: float = 10.0):
     """Context manager for database connections - Supports PostgreSQL and SQLite
 
     Args:
         db_path: Optional path for SQLite database
         max_retries: Maximum number of retries for PostgreSQL connections
+        timeout: Timeout in seconds for getting a connection from the pool
     """
     conn = None
     use_postgresql = settings.use_postgresql and POSTGRESQL_AVAILABLE and _postgresql_pool is not None
 
     try:
         if use_postgresql:
-            # Use PostgreSQL with retry logic
+            # Use PostgreSQL with retry logic and timeout
+            import time
+            start_time = time.time()
+            
             for attempt in range(max_retries):
                 try:
-                    conn = _postgresql_pool.getconn()
+                    # Check if we've exceeded timeout
+                    if time.time() - start_time > timeout:
+                        raise Exception(f"Connection timeout after {timeout}s")
+                    
+                    # Try to get connection with timeout handling
+                    try:
+                        conn = _postgresql_pool.getconn()
+                    except Exception as pool_error:
+                        # Pool exhausted or other pool error
+                        error_msg = str(pool_error).lower()
+                        if ("connection pool exhausted" in error_msg or 
+                            "could not get connection" in error_msg or
+                            "pool" in error_msg):
+                            if attempt < max_retries - 1:
+                                wait_time = min(0.5 * (attempt + 1), 2.0)  # Exponential backoff, max 2s
+                                logger.debug(
+                                    f"Connection pool exhausted, waiting {wait_time:.1f}s before retry {attempt + 1}/{max_retries}")
+                                time.sleep(wait_time)
+                                continue
+                            else:
+                                logger.error(f"Connection pool exhausted after {max_retries} attempts")
+                                raise Exception("Connection pool exhausted - all connections are in use. Please try again later.")
+                        else:
+                            raise
+                    
                     if conn:
                         # Check if connection is alive before using it
                         if not _is_connection_alive(conn):
@@ -157,6 +185,7 @@ def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3):
                         if attempt < max_retries - 1:
                             logger.warning(
                                 f"Failed to get connection from pool, attempt {attempt + 1}/{max_retries}")
+                            time.sleep(0.5)
                             continue
                         else:
                             raise Exception(
@@ -171,6 +200,7 @@ def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3):
                             except:
                                 pass
                             conn = None
+                        time.sleep(0.5)
                         continue
                     else:
                         logger.error(
@@ -198,27 +228,50 @@ def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3):
         if conn:
             if use_postgresql:
                 try:
-                    # Check if connection is still alive before returning to pool
-                    if _is_connection_alive(conn):
-                        # Return connection to pool (don't close it)
-                        _postgresql_pool.putconn(conn)
-                    else:
-                        # Connection is dead, close it instead of returning to pool
-                        logger.debug(
-                            "Connection is dead, closing instead of returning to pool")
+                    # Always try to return connection to pool, but handle errors gracefully
+                    try:
+                        # Check if connection is still alive before returning to pool
+                        if _is_connection_alive(conn):
+                            # Return connection to pool (don't close it)
+                            _postgresql_pool.putconn(conn, close=False)
+                        else:
+                            # Connection is dead, close it instead of returning to pool
+                            logger.debug(
+                                "Connection is dead, closing instead of returning to pool")
+                            try:
+                                conn.close()
+                            except:
+                                pass
+                    except Exception as pool_error:
+                        # Pool error (e.g., connection not from this pool)
+                        error_msg = str(pool_error).lower()
+                        if "pool" in error_msg:
+                            logger.warning(f"Error returning connection to pool: {pool_error}")
+                        else:
+                            logger.debug(f"Error returning connection to pool: {pool_error}")
+                        try:
+                            conn.close()
+                        except:
+                            pass
+                    except Exception as e:
+                        logger.error(f"Error returning connection to pool: {e}")
+                        # If pool is full or connection is bad, close it
                         try:
                             conn.close()
                         except:
                             pass
                 except Exception as e:
-                    logger.error(f"Error returning connection to pool: {e}")
-                    # If pool is full or connection is bad, close it
+                    # Final fallback - ensure connection is closed
+                    logger.error(f"Critical error managing connection: {e}")
                     try:
                         conn.close()
                     except:
                         pass
             else:
-                conn.close()
+                try:
+                    conn.close()
+                except:
+                    pass
 
 
 def init_database():
