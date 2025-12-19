@@ -38,8 +38,16 @@ class MarketDataService:
         self.prediction_repo = PredictionRepository()
         self.prediction_service = prediction_service
 
-    def get_daily_data(self, days: int = 90) -> Dict:
-        """Get daily market data with predictions"""
+    def get_daily_data(self, days: int = 90, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict:
+        """Get daily market data with predictions
+        
+        Args:
+            days: Number of days to fetch (default: 90)
+            start_date: Optional start date in YYYY-MM-DD format
+            end_date: Optional end date in YYYY-MM-DD format
+            
+        Note: If start_date/end_date are provided, they take precedence over days parameter
+        """
         try:
             period = f"{max(days, 90)}d" if isinstance(days, int) else "3mo"
             hist, symbol_used, rate_limit_info = market_data_cache.get_cached_market_data(
@@ -204,6 +212,33 @@ class MarketDataService:
 
             # Sort daily_data by date to maintain chronological order
             daily_data.sort(key=lambda x: x['date'])
+            
+            # Filter by date range if start_date or end_date provided
+            if start_date or end_date:
+                filtered_data = []
+                for data_point in daily_data:
+                    date_str = data_point['date']
+                    # Check if date is within the specified range
+                    if start_date and date_str < start_date:
+                        continue
+                    if end_date and date_str > end_date:
+                        continue
+                    filtered_data.append(data_point)
+                daily_data = filtered_data
+                
+                # Also filter historical predictions to match the date range
+                filtered_predictions = []
+                for pred in all_historical_predictions:
+                    pred_date = pred['date']
+                    if start_date and pred_date < start_date:
+                        continue
+                    if end_date and pred_date > end_date:
+                        continue
+                    filtered_predictions.append(pred)
+                all_historical_predictions = filtered_predictions
+                
+                logger.debug(f"Filtered data by date range: {start_date or 'beginning'} to {end_date or 'end'}, "
+                           f"result: {len(daily_data)} data points, {len(all_historical_predictions)} predictions")
 
             # Get current price - use last ACTUAL trading day's closing price (not weekend)
             # Find the last trading day from the original market data (hist), not synthetic weekend points

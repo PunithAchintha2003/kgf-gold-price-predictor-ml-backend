@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from datetime import datetime
+from typing import Optional
 import json
 import asyncio
 import warnings
@@ -179,9 +180,19 @@ async def websocket_endpoint(websocket: WebSocket):
 # Legacy endpoints (for backward compatibility)
 # These redirect to the new API routes
 @app.get("/xauusd")
-async def get_daily_data_legacy(days: int = 90):
-    """Get XAU/USD daily data (legacy endpoint)"""
-    return market_data_service.get_daily_data(days=days)
+async def get_daily_data_legacy(
+    days: int = 90,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+):
+    """Get XAU/USD daily data (legacy endpoint)
+    
+    Args:
+        days: Number of days to fetch (default: 90)
+        start_date: Optional start date in YYYY-MM-DD format
+        end_date: Optional end date in YYYY-MM-DD format
+    """
+    return market_data_service.get_daily_data(days=days, start_date=start_date, end_date=end_date)
 
 
 @app.get("/xauusd/realtime")
