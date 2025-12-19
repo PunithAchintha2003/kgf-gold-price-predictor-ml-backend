@@ -363,6 +363,26 @@ async def get_prediction_stats_legacy():
         }
 
 
+@app.get("/xauusd/pending-predictions")
+async def get_pending_predictions_legacy():
+    """Get list of pending predictions awaiting market results (legacy endpoint)"""
+    try:
+        pending = prediction_repo.get_pending_predictions()
+        return {
+            "status": "success",
+            "data": {
+                "pending_count": len(pending),
+                "predictions": pending
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting pending predictions: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
 @app.get("/exchange-rate/{from_currency}/{to_currency}")
 async def get_exchange_rate_legacy(from_currency: str, to_currency: str):
     """Get exchange rate between currencies (legacy endpoint)"""
