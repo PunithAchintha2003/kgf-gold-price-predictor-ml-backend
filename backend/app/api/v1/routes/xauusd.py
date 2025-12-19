@@ -117,10 +117,46 @@ async def get_enhanced_prediction(
                 "timestamp": datetime.now().isoformat()
             }
 
+        # Validate prediction is within reasonable range (gold typically $1,000-$5,000 per troy ounce)
+        # If prediction is outside this range, it's likely a model error
+        MIN_REASONABLE_PRICE = 1000.0
+        MAX_REASONABLE_PRICE = 5000.0
+        MAX_PERCENT_CHANGE = 50.0  # Max 50% change in one day is extremely rare
+        
+        if predicted_price < MIN_REASONABLE_PRICE or predicted_price > MAX_REASONABLE_PRICE:
+            logger.error(
+                f"⚠️  Prediction {predicted_price:.2f} is outside reasonable range "
+                f"(${MIN_REASONABLE_PRICE:.2f} - ${MAX_REASONABLE_PRICE:.2f}). "
+                f"Current price: ${current_price:.2f}. This may indicate a model error."
+            )
+            # Try fallback model if available
+            if prediction_service.lasso_predictor and prediction_service.lasso_predictor.model is not None:
+                logger.info("🔄 Attempting fallback model due to unreasonable prediction...")
+                try:
+                    fallback_prediction = prediction_service.lasso_predictor.predict_next_price(
+                        prediction_service.lasso_predictor.create_fundamental_features(
+                            prediction_service.lasso_predictor.fetch_market_data()
+                        )
+                    )
+                    if fallback_prediction and MIN_REASONABLE_PRICE <= fallback_prediction <= MAX_REASONABLE_PRICE:
+                        logger.info(f"✅ Fallback model produced reasonable prediction: ${fallback_prediction:.2f}")
+                        predicted_price = fallback_prediction
+                    else:
+                        logger.warning(f"⚠️  Fallback model also produced unreasonable prediction: ${fallback_prediction:.2f}")
+                except Exception as fallback_error:
+                    logger.error(f"Fallback model failed: {fallback_error}")
+
         # Calculate change
         change = predicted_price - current_price
         change_percentage = (change / current_price *
                              100) if current_price > 0 else 0
+        
+        # Warn if change percentage is extreme
+        if abs(change_percentage) > MAX_PERCENT_CHANGE:
+            logger.warning(
+                f"⚠️  Extreme predicted change: {change_percentage:.2f}% "
+                f"(${change:.2f}). This may indicate a model error."
+            )
 
         # Get method name and model information
         try:
@@ -250,8 +286,26 @@ async def get_model_info(
         - r2_score: Primary score (live if available, otherwise training)
         - live_accuracy_stats: Full live accuracy statistics including average_accuracy, total_predictions, etc.
     """
+    from ....core.logging_config import get_logger
+    logger = get_logger(__name__)
+    
     try:
         model_info = prediction_service.get_model_info()
+        
+        # Ensure model_info is a valid dict
+        if not isinstance(model_info, dict):
+            logger.warning(f"get_model_info() returned non-dict: {type(model_info)}")
+            model_info = {
+                "active_model": None,
+                "model_type": None,
+                "training_r2_score": None,
+                "live_r2_score": None,
+                "r2_score": None,
+                "features_count": None,
+                "selected_features_count": None,
+                "fallback_available": False,
+                "live_accuracy_stats": None
+            }
         
         # Add explanation for the R² scores
         r2_explanation = {
@@ -267,12 +321,22 @@ async def get_model_info(
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        from ....core.logging_config import get_logger
-        logger = get_logger(__name__)
         logger.error(f"Error getting model info: {e}", exc_info=True)
+        # Return a valid response even on error
         return {
             "status": "error",
             "message": str(e),
+            "model": {
+                "active_model": None,
+                "model_type": None,
+                "training_r2_score": None,
+                "live_r2_score": None,
+                "r2_score": None,
+                "features_count": None,
+                "selected_features_count": None,
+                "fallback_available": False,
+                "live_accuracy_stats": None
+            },
             "timestamp": datetime.now().isoformat()
         }
 

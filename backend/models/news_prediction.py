@@ -437,16 +437,46 @@ class NewsEnhancedLassoPredictor:
         """
         Create enhanced features combining market data with news sentiment
         """
+        # Validate market data
+        if market_data is None:
+            raise ValueError("Market data is None - cannot create enhanced features")
+        
+        if 'gold' not in market_data or market_data['gold'] is None or market_data['gold'].empty:
+            raise ValueError("Gold market data is missing or empty - cannot create enhanced features")
+        
         # Start with basic market features (similar to original lasso model)
         from .lasso_model import LassoGoldPredictor
 
         base_predictor = LassoGoldPredictor()
-        base_features = base_predictor.create_fundamental_features(market_data)
+        try:
+            base_features = base_predictor.create_fundamental_features(market_data)
+        except Exception as e:
+            logger.error(f"Failed to create fundamental features: {e}", exc_info=True)
+            raise ValueError(f"Failed to create fundamental features: {e}") from e
+        
+        if base_features is None or base_features.empty:
+            raise ValueError("Base features DataFrame is empty - cannot create enhanced features")
 
         if sentiment_df is not None and not sentiment_df.empty:
             # Align sentiment features with market data
-            sentiment_df['date'] = pd.to_datetime(sentiment_df['date']).dt.date
-            base_features['date'] = base_features.index.date
+            try:
+                sentiment_df['date'] = pd.to_datetime(sentiment_df['date']).dt.date
+            except Exception as e:
+                logger.warning(f"Error converting sentiment dates: {e}. Skipping sentiment merge.")
+                return base_features
+            
+            # Convert base_features index to date
+            # Ensure index is DatetimeIndex, then extract dates
+            try:
+                if not isinstance(base_features.index, pd.DatetimeIndex):
+                    base_features.index = pd.to_datetime(base_features.index)
+                
+                # Extract date from DatetimeIndex (returns array of date objects)
+                base_features['date'] = base_features.index.date
+            except (ValueError, TypeError, AttributeError) as e:
+                logger.error(f"Error converting base_features index to date: {e}", exc_info=True)
+                logger.warning("Cannot merge sentiment features - index conversion failed. Using base features only.")
+                return base_features
 
             # Merge sentiment features
             enhanced_features = base_features.merge(
@@ -474,19 +504,21 @@ class NewsEnhancedLassoPredictor:
                 "No sentiment data available, using base features only")
             return base_features
 
-    def train_enhanced_model(self, enhanced_features: pd.DataFrame, target_col='gold_close', test_size=0.2):
+    def train_enhanced_model(self, enhanced_features: pd.DataFrame, target_col='gold_close', test_size=0.2, prediction_horizon=1):
         """
         Train enhanced Lasso model with news sentiment features
+        prediction_horizon: Number of days ahead to predict (default: 1 for next day)
         """
         logger.info(
             "Training enhanced Lasso model with news sentiment features")
 
         # Prepare training data
-        # Use current day features to predict current day price (no shift needed)
+        # Shift target to predict next day's price (same as basic lasso model)
         data = enhanced_features.copy()
+        data['target'] = data[target_col].shift(-prediction_horizon)
         
-        # Remove any rows with NaN in target column
-        data_clean = data.dropna(subset=[target_col])
+        # Remove any rows with NaN values (including the shifted target)
+        data_clean = data.dropna()
 
         if data_clean.empty:
             logger.error("No valid data after cleaning")
@@ -496,9 +528,9 @@ class NewsEnhancedLassoPredictor:
 
         # Separate features and target
         feature_cols = [
-            col for col in data_clean.columns if col != target_col]
+            col for col in data_clean.columns if col not in ['target', target_col]]
         X = data_clean[feature_cols]
-        y = data_clean[target_col]
+        y = data_clean['target']  # Use shifted target (next day's price)
         
         # Fill any remaining NaN values in features
         X = X.fillna(0)

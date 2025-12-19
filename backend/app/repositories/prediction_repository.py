@@ -235,171 +235,189 @@ class PredictionRepository:
     @staticmethod
     def get_accuracy_stats() -> Dict:
         """Get accuracy statistics"""
-        db_type = get_db_type()
+        try:
+            db_type = get_db_type()
 
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
 
-            # Get accuracy for unique predictions with actual prices (excluding weekends)
-            if db_type == "postgresql":
-                # Optimized query using window function
-                cursor.execute('''
-                    SELECT prediction_date, accuracy_percentage
-                    FROM (
-                        SELECT prediction_date, accuracy_percentage,
-                               ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
-                        FROM predictions
-                        WHERE accuracy_percentage IS NOT NULL
-                    ) ranked
-                    WHERE rn = 1
-                ''')
-            else:
-                # SQLite optimized using JOIN
-                cursor.execute('''
-                    SELECT p1.prediction_date, p1.accuracy_percentage
-                    FROM predictions p1
-                    INNER JOIN (
-                        SELECT prediction_date, MAX(created_at) as max_created_at
-                        FROM predictions
-                        WHERE accuracy_percentage IS NOT NULL
-                        GROUP BY prediction_date
-                    ) p2 ON p1.prediction_date = p2.prediction_date 
-                        AND p1.created_at = p2.max_created_at
-                ''')
-
-            accuracy_results = cursor.fetchall()
-            # Filter out weekends and calculate average
-            evaluated_count = 0
-            accuracy_values = []
-            for row in accuracy_results:
-                date_value = row[0]
-                if hasattr(date_value, 'weekday'):
-                    weekday = date_value.weekday()
-                elif isinstance(date_value, str):
-                    date_obj = datetime.strptime(date_value, '%Y-%m-%d')
-                    weekday = date_obj.weekday()
+                # Get accuracy for unique predictions with actual prices (excluding weekends)
+                if db_type == "postgresql":
+                    # Optimized query using window function
+                    cursor.execute('''
+                        SELECT prediction_date, accuracy_percentage
+                        FROM (
+                            SELECT prediction_date, accuracy_percentage,
+                                   ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                            FROM predictions
+                            WHERE accuracy_percentage IS NOT NULL
+                        ) ranked
+                        WHERE rn = 1
+                    ''')
                 else:
-                    continue
+                    # SQLite optimized using JOIN
+                    cursor.execute('''
+                        SELECT p1.prediction_date, p1.accuracy_percentage
+                        FROM predictions p1
+                        INNER JOIN (
+                            SELECT prediction_date, MAX(created_at) as max_created_at
+                            FROM predictions
+                            WHERE accuracy_percentage IS NOT NULL
+                            GROUP BY prediction_date
+                        ) p2 ON p1.prediction_date = p2.prediction_date 
+                            AND p1.created_at = p2.max_created_at
+                    ''')
 
-                # Only count weekdays (Monday=0 to Friday=4)
-                if weekday < 5:
-                    evaluated_count += 1
-                    accuracy_values.append(float(row[1]))
+                accuracy_results = cursor.fetchall()
+                # Filter out weekends and calculate average
+                evaluated_count = 0
+                accuracy_values = []
+                for row in accuracy_results:
+                    try:
+                        date_value = row[0]
+                        if hasattr(date_value, 'weekday'):
+                            weekday = date_value.weekday()
+                        elif isinstance(date_value, str):
+                            date_obj = datetime.strptime(date_value, '%Y-%m-%d')
+                            weekday = date_obj.weekday()
+                        else:
+                            continue
 
-            avg_accuracy = sum(accuracy_values) / \
-                len(accuracy_values) if accuracy_values else 0.0
+                        # Only count weekdays (Monday=0 to Friday=4)
+                        if weekday < 5:
+                            evaluated_count += 1
+                            accuracy_values.append(float(row[1]))
+                    except Exception as e:
+                        logger.warning(f"Error processing accuracy row: {e}")
+                        continue
 
-            # Get total unique prediction dates (excluding weekends)
-            if db_type == "postgresql":
-                # Optimized query using window function
-                cursor.execute('''
-                    SELECT DISTINCT prediction_date
-                    FROM (
-                        SELECT prediction_date,
-                               ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
-                        FROM predictions
-                    ) ranked
-                    WHERE rn = 1
-                ''')
-            else:
-                # SQLite optimized using JOIN
-                cursor.execute('''
-                    SELECT DISTINCT p1.prediction_date
-                    FROM predictions p1
-                    INNER JOIN (
-                        SELECT prediction_date, MAX(created_at) as max_created_at
-                        FROM predictions
-                        GROUP BY prediction_date
-                    ) p2 ON p1.prediction_date = p2.prediction_date 
-                        AND p1.created_at = p2.max_created_at
-                ''')
+                avg_accuracy = sum(accuracy_values) / \
+                    len(accuracy_values) if accuracy_values else 0.0
 
-            total_dates = cursor.fetchall()
-            # Filter out weekends - only count weekdays
-            total_count = 0
-            for row in total_dates:
-                date_value = row[0]
-                if hasattr(date_value, 'weekday'):
-                    weekday = date_value.weekday()
-                elif isinstance(date_value, str):
-                    date_obj = datetime.strptime(date_value, '%Y-%m-%d')
-                    weekday = date_obj.weekday()
+                # Get total unique prediction dates (excluding weekends)
+                if db_type == "postgresql":
+                    # Optimized query using window function
+                    cursor.execute('''
+                        SELECT DISTINCT prediction_date
+                        FROM (
+                            SELECT prediction_date,
+                                   ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                            FROM predictions
+                        ) ranked
+                        WHERE rn = 1
+                    ''')
                 else:
-                    continue
+                    # SQLite optimized using JOIN
+                    cursor.execute('''
+                        SELECT DISTINCT p1.prediction_date
+                        FROM predictions p1
+                        INNER JOIN (
+                            SELECT prediction_date, MAX(created_at) as max_created_at
+                            FROM predictions
+                            GROUP BY prediction_date
+                        ) p2 ON p1.prediction_date = p2.prediction_date 
+                            AND p1.created_at = p2.max_created_at
+                    ''')
 
-                # Only count weekdays (Monday=0 to Friday=4)
-                if weekday < 5:
-                    total_count += 1
+                total_dates = cursor.fetchall()
+                # Filter out weekends - only count weekdays
+                total_count = 0
+                for row in total_dates:
+                    try:
+                        date_value = row[0]
+                        if hasattr(date_value, 'weekday'):
+                            weekday = date_value.weekday()
+                        elif isinstance(date_value, str):
+                            date_obj = datetime.strptime(date_value, '%Y-%m-%d')
+                            weekday = date_obj.weekday()
+                        else:
+                            continue
 
-            # Get predicted and actual prices for R² calculation
-            # Exclude manual entries (where prediction_method = 'Manual Entry' or predicted_price = actual_price)
-            if db_type == "postgresql":
-                # Optimized query using window function
-                cursor.execute('''
-                    SELECT predicted_price, actual_price, prediction_method
-                    FROM (
-                        SELECT predicted_price, actual_price, prediction_method,
-                               ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
-                        FROM predictions
-                        WHERE actual_price IS NOT NULL
-                        AND predicted_price IS NOT NULL
-                        AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
-                        AND ABS(predicted_price - actual_price) > 0.01
-                    ) ranked
-                    WHERE rn = 1
-                ''')
-            else:
-                # SQLite optimized using JOIN
-                cursor.execute('''
-                    SELECT p1.predicted_price, p1.actual_price, p1.prediction_method
-                    FROM predictions p1
-                    INNER JOIN (
-                        SELECT prediction_date, MAX(created_at) as max_created_at
-                        FROM predictions
-                        WHERE actual_price IS NOT NULL
-                        AND predicted_price IS NOT NULL
-                        AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
-                        AND ABS(predicted_price - actual_price) > 0.01
-                        GROUP BY prediction_date
-                    ) p2 ON p1.prediction_date = p2.prediction_date 
-                        AND p1.created_at = p2.max_created_at
-                ''')
+                        # Only count weekdays (Monday=0 to Friday=4)
+                        if weekday < 5:
+                            total_count += 1
+                    except Exception as e:
+                        logger.warning(f"Error processing date row: {e}")
+                        continue
 
-            price_data = cursor.fetchall()
-
-            # Debug logging
-            logger.debug(
-                f"R² calculation: Found {len(price_data) if price_data else 0} model predictions (excluding manual entries)")
-
-        # avg_accuracy and evaluated_count are already calculated above (excluding weekends)
-
-        # Calculate R² score (only for model predictions, excluding manual entries)
-        r2_score = None
-        if price_data and len(price_data) > 1:
-            try:
-                predicted_prices = np.array(
-                    [float(row[0]) for row in price_data])
-                actual_prices = np.array([float(row[1]) for row in price_data])
-
-                # Calculate R² = 1 - (SS_res / SS_tot)
-                ss_res = np.sum((actual_prices - predicted_prices) ** 2)
-                ss_tot = np.sum((actual_prices - np.mean(actual_prices)) ** 2)
-
-                if ss_tot > 0:
-                    r2_score = 1 - (ss_res / ss_tot)
-                    r2_score = round(float(r2_score), 4)
+                # Get predicted and actual prices for R² calculation
+                # Exclude manual entries (where prediction_method = 'Manual Entry' or predicted_price = actual_price)
+                if db_type == "postgresql":
+                    # Optimized query using window function
+                    cursor.execute('''
+                        SELECT predicted_price, actual_price, prediction_method
+                        FROM (
+                            SELECT predicted_price, actual_price, prediction_method,
+                                   ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                            FROM predictions
+                            WHERE actual_price IS NOT NULL
+                            AND predicted_price IS NOT NULL
+                            AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
+                            AND ABS(predicted_price - actual_price) > 0.01
+                        ) ranked
+                        WHERE rn = 1
+                    ''')
                 else:
+                    # SQLite optimized using JOIN
+                    cursor.execute('''
+                        SELECT p1.predicted_price, p1.actual_price, p1.prediction_method
+                        FROM predictions p1
+                        INNER JOIN (
+                            SELECT prediction_date, MAX(created_at) as max_created_at
+                            FROM predictions
+                            WHERE actual_price IS NOT NULL
+                            AND predicted_price IS NOT NULL
+                            AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
+                            AND ABS(predicted_price - actual_price) > 0.01
+                            GROUP BY prediction_date
+                        ) p2 ON p1.prediction_date = p2.prediction_date 
+                            AND p1.created_at = p2.max_created_at
+                    ''')
+
+                price_data = cursor.fetchall()
+
+                # Debug logging
+                logger.debug(
+                    f"R² calculation: Found {len(price_data) if price_data else 0} model predictions (excluding manual entries)")
+
+            # avg_accuracy and evaluated_count are already calculated above (excluding weekends)
+
+            # Calculate R² score (only for model predictions, excluding manual entries)
+            r2_score = None
+            if price_data and len(price_data) > 1:
+                try:
+                    predicted_prices = np.array(
+                        [float(row[0]) for row in price_data])
+                    actual_prices = np.array([float(row[1]) for row in price_data])
+
+                    # Calculate R² = 1 - (SS_res / SS_tot)
+                    ss_res = np.sum((actual_prices - predicted_prices) ** 2)
+                    ss_tot = np.sum((actual_prices - np.mean(actual_prices)) ** 2)
+
+                    if ss_tot > 0:
+                        r2_score = 1 - (ss_res / ss_tot)
+                        r2_score = round(float(r2_score), 4)
+                    else:
+                        r2_score = None
+                except Exception as e:
+                    logger.warning(f"Error calculating R² score: {e}", exc_info=True)
                     r2_score = None
-            except Exception as e:
-                logger.warning(f"Error calculating R² score: {e}")
-                r2_score = None
 
-        return {
-            'average_accuracy': round(avg_accuracy, 2),
-            'r2_score': r2_score if r2_score is not None else None,
-            'total_predictions': total_count,
-            'evaluated_predictions': evaluated_count
-        }
+            return {
+                'average_accuracy': round(avg_accuracy, 2),
+                'r2_score': r2_score if r2_score is not None else None,
+                'total_predictions': total_count,
+                'evaluated_predictions': evaluated_count
+            }
+        except Exception as e:
+            logger.error(f"Error getting accuracy stats: {e}", exc_info=True)
+            # Return default values on error
+            return {
+                'average_accuracy': 0.0,
+                'r2_score': None,
+                'total_predictions': 0,
+                'evaluated_predictions': 0
+            }
 
     @staticmethod
     def get_accuracy_visualization_data(days: int = 90) -> Dict:

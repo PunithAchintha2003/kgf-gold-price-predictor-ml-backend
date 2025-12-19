@@ -46,25 +46,57 @@ class LassoGoldPredictor:
     def fetch_market_data(self, symbol='GC=F', period='2y'):
         """Fetch comprehensive market data for gold and related assets"""
         try:
-            # Gold futures data
+            # Gold futures data (required - must succeed)
             gold = yf.Ticker(symbol)
             gold_data = gold.history(period=period, interval='1d')
+            
+            if gold_data is None or gold_data.empty:
+                logger.error(f"Failed to fetch gold data for {symbol}")
+                return None
 
-            # Dollar Index (DXY)
-            dxy = yf.Ticker('DX-Y.NYB')
-            dxy_data = dxy.history(period=period, interval='1d')
+            # Dollar Index (DXY) - optional
+            dxy_data = pd.DataFrame()
+            try:
+                dxy = yf.Ticker('DX-Y.NYB')
+                dxy_data = dxy.history(period=period, interval='1d')
+                if dxy_data is None or dxy_data.empty:
+                    logger.debug("DXY data unavailable or empty")
+                    dxy_data = pd.DataFrame()
+            except Exception as e:
+                logger.debug(f"DXY data fetch failed (non-critical): {e}")
 
-            # 10-Year Treasury Yield
-            treasury = yf.Ticker('^TNX')
-            treasury_data = treasury.history(period=period, interval='1d')
+            # 10-Year Treasury Yield - optional
+            treasury_data = pd.DataFrame()
+            try:
+                treasury = yf.Ticker('^TNX')
+                treasury_data = treasury.history(period=period, interval='1d')
+                if treasury_data is None or treasury_data.empty:
+                    logger.debug("Treasury data unavailable or empty")
+                    treasury_data = pd.DataFrame()
+            except Exception as e:
+                logger.debug(f"Treasury data fetch failed (non-critical): {e}")
 
-            # VIX (Volatility Index)
-            vix = yf.Ticker('^VIX')
-            vix_data = vix.history(period=period, interval='1d')
+            # VIX (Volatility Index) - optional
+            vix_data = pd.DataFrame()
+            try:
+                vix = yf.Ticker('^VIX')
+                vix_data = vix.history(period=period, interval='1d')
+                if vix_data is None or vix_data.empty:
+                    logger.debug("VIX data unavailable or empty")
+                    vix_data = pd.DataFrame()
+            except Exception as e:
+                logger.debug(f"VIX data fetch failed (non-critical): {e}")
 
-            # Oil prices (WTI)
-            oil = yf.Ticker('CL=F')
-            oil_data = oil.history(period=period, interval='1d')
+            # Oil prices (WTI) - optional
+            oil_data = pd.DataFrame()
+            try:
+                oil = yf.Ticker('CL=F')
+                oil_data = oil.history(period=period, interval='1d')
+                if oil_data is None or oil_data.empty:
+                    logger.debug("Oil data unavailable or empty")
+                    oil_data = pd.DataFrame()
+            except Exception as e:
+                logger.debug(f"Oil data fetch failed (non-critical): {e}")
 
             return {
                 'gold': gold_data,
@@ -74,11 +106,17 @@ class LassoGoldPredictor:
                 'oil': oil_data
             }
         except Exception as e:
-            logger.error(f"Error fetching market data: {e}")
+            logger.error(f"Error fetching market data: {e}", exc_info=True)
             return None
 
     def create_technical_features(self, df):
         """Create comprehensive technical indicators"""
+        if df is None or df.empty:
+            raise ValueError("DataFrame is empty or None - cannot create technical features")
+        
+        if 'Close' not in df.columns:
+            raise ValueError("DataFrame missing 'Close' column required for technical features")
+        
         df = df.copy()
 
         # Price-based features
@@ -146,10 +184,24 @@ class LassoGoldPredictor:
 
     def create_fundamental_features(self, market_data):
         """Create fundamental features from multiple market data sources"""
+        # Validate gold data exists and is not empty
+        if market_data is None or 'gold' not in market_data:
+            raise ValueError("Market data is missing or gold data is not available")
+        
+        gold_data = market_data['gold']
+        if gold_data is None or gold_data.empty:
+            raise ValueError("Gold market data is empty or unavailable")
+        
         # Start with gold data as base
-        gold_df = self.create_technical_features(market_data['gold'])
-        features_df = gold_df[['Close', 'returns', 'rsi',
-                               'macd', 'bb_position', 'volatility_20']].copy()
+        gold_df = self.create_technical_features(gold_data)
+        
+        # Validate required columns exist
+        required_cols = ['Close', 'returns', 'rsi', 'macd', 'bb_position', 'volatility_20']
+        missing_cols = [col for col in required_cols if col not in gold_df.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required columns in gold data: {missing_cols}")
+        
+        features_df = gold_df[required_cols].copy()
         features_df.columns = ['gold_close', 'gold_returns', 'gold_rsi',
                                'gold_macd', 'gold_bb_position', 'gold_volatility']
 

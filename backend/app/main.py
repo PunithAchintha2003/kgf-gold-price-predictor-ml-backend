@@ -325,6 +325,21 @@ async def get_model_info_legacy():
     try:
         model_info = prediction_service.get_model_info()
         
+        # Ensure model_info is a valid dict
+        if not isinstance(model_info, dict):
+            logger.warning(f"get_model_info() returned non-dict: {type(model_info)}")
+            model_info = {
+                "active_model": None,
+                "model_type": None,
+                "training_r2_score": None,
+                "live_r2_score": None,
+                "r2_score": None,
+                "features_count": None,
+                "selected_features_count": None,
+                "fallback_available": False,
+                "live_accuracy_stats": None
+            }
+        
         # Add explanation for the R² scores
         r2_explanation = {
             "training_r2_score": "Static accuracy from model training (historical test data)",
@@ -340,9 +355,21 @@ async def get_model_info_legacy():
         }
     except Exception as e:
         logger.error(f"Error getting model info: {e}", exc_info=True)
+        # Return a valid response even on error
         return {
             "status": "error",
             "message": str(e),
+            "model": {
+                "active_model": None,
+                "model_type": None,
+                "training_r2_score": None,
+                "live_r2_score": None,
+                "r2_score": None,
+                "features_count": None,
+                "selected_features_count": None,
+                "fallback_available": False,
+                "live_accuracy_stats": None
+            },
             "timestamp": datetime.now().isoformat()
         }
 
