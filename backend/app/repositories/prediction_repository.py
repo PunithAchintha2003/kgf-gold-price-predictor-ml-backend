@@ -146,6 +146,80 @@ class PredictionRepository:
         return float(result[0]) if result and result[0] is not None else None
 
     @staticmethod
+    def get_prediction_details_for_date(prediction_date: str) -> Optional[Dict]:
+        """Get full prediction details (price, method, etc.) for the given date"""
+        db_type = get_db_type()
+        has_prediction_method = False
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if prediction_method column exists
+            try:
+                if db_type == "postgresql":
+                    cursor.execute("""
+                        SELECT column_name FROM information_schema.columns 
+                        WHERE table_name = 'predictions' AND column_name = 'prediction_method'
+                    """)
+                    has_prediction_method = cursor.fetchone() is not None
+                else:
+                    cursor.execute("PRAGMA table_info(predictions)")
+                    columns = [row[1] for row in cursor.fetchall()]
+                    has_prediction_method = 'prediction_method' in columns
+            except Exception as e:
+                logger.debug(f"Error checking for prediction_method column: {e}")
+                has_prediction_method = False
+
+            # Query with or without method column
+            try:
+                if db_type == "postgresql":
+                    if has_prediction_method:
+                        cursor.execute('''
+                            SELECT predicted_price, prediction_method FROM predictions 
+                            WHERE prediction_date = %s
+                            ORDER BY created_at DESC 
+                            LIMIT 1
+                        ''', (prediction_date,))
+                    else:
+                        cursor.execute('''
+                            SELECT predicted_price FROM predictions 
+                            WHERE prediction_date = %s
+                            ORDER BY created_at DESC 
+                            LIMIT 1
+                        ''', (prediction_date,))
+                else:
+                    if has_prediction_method:
+                        cursor.execute('''
+                            SELECT predicted_price, prediction_method FROM predictions 
+                            WHERE prediction_date = ?
+                            ORDER BY created_at DESC 
+                            LIMIT 1
+                        ''', (prediction_date,))
+                    else:
+                        cursor.execute('''
+                            SELECT predicted_price FROM predictions 
+                            WHERE prediction_date = ?
+                            ORDER BY created_at DESC 
+                            LIMIT 1
+                        ''', (prediction_date,))
+            except Exception as e:
+                logger.error(f"Error querying prediction details: {e}", exc_info=True)
+                return None
+
+            result = cursor.fetchone()
+            
+            if not result:
+                return None
+            
+            # Build result dictionary
+            details = {
+                "predicted_price": float(result[0]) if result[0] is not None else None,
+                "method": result[1] if has_prediction_method and len(result) > 1 else None
+            }
+            
+            return details
+
+    @staticmethod
     def get_historical_predictions(days: int = 90) -> List[Dict]:
         """Get historical predictions for the specified number of days"""
         date_func = get_date_function(-days)

@@ -100,6 +100,14 @@ class Settings:
             os.getenv("AUTO_RETRAIN_MIN_PREDICTIONS", "10"))  # Minimum predictions before retrain
         self.auto_retrain_news_days: int = int(
             os.getenv("AUTO_RETRAIN_NEWS_DAYS", "30"))  # Days of news data for training
+        
+        # Daily prediction generation settings (when market opens)
+        self.auto_predict_enabled: bool = os.getenv(
+            "AUTO_PREDICT_ENABLED", "true").lower() == "true"
+        self.auto_predict_hour: int = int(
+            os.getenv("AUTO_PREDICT_HOUR", "8"))  # Default: 8 AM (market open time)
+        self.auto_predict_startup_delay: int = int(
+            os.getenv("AUTO_PREDICT_STARTUP_DELAY", "60"))  # Default: 1 minute
 
         # Validate configuration
         self._validate()
@@ -160,6 +168,14 @@ class Settings:
         if self.auto_retrain_min_predictions < 1:
             errors.append(
                 f"AUTO_RETRAIN_MIN_PREDICTIONS must be at least 1, got {self.auto_retrain_min_predictions}")
+        
+        # Validate auto-predict settings
+        if self.auto_predict_hour < 0 or self.auto_predict_hour > 23:
+            errors.append(
+                f"AUTO_PREDICT_HOUR must be between 0 and 23, got {self.auto_predict_hour}")
+        if self.auto_predict_startup_delay < 0:
+            errors.append(
+                f"AUTO_PREDICT_STARTUP_DELAY must be non-negative, got {self.auto_predict_startup_delay}")
 
         # Warn about production settings
         if self.environment == "production":
