@@ -119,16 +119,44 @@ class NewsSentimentAnalyzer:
                 'function': 'NEWS_SENTIMENT',
                 'tickers': 'GOLD',
                 'apikey': self.alpha_vantage_key,
-                'limit': 1000
+                'limit': 50  # Reduced from 1000 to avoid rate limits (free tier: 25 calls/day)
             }
 
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
 
             data = response.json()
+            
+            # Check for Alpha Vantage error messages (they return errors in JSON, not HTTP status)
+            if 'Note' in data:
+                note_msg = data['Note']
+                logger.warning(f"Alpha Vantage rate limit or info: {note_msg}")
+                # Check if it's a rate limit message
+                if 'API call frequency' in note_msg or 'premium' in note_msg.lower():
+                    logger.info("Alpha Vantage rate limit reached - skipping this fetch")
+                return []
+            
+            if 'Information' in data:
+                info_msg = data['Information']
+                logger.warning(f"Alpha Vantage information: {info_msg}")
+                # Check if it's a rate limit message
+                if 'API call frequency' in info_msg or 'premium' in info_msg.lower():
+                    logger.info("Alpha Vantage rate limit reached - skipping this fetch")
+                return []
+            
+            if 'Error Message' in data:
+                error_msg = data['Error Message']
+                logger.error(f"Alpha Vantage error: {error_msg}")
+                return []
+            
+            # Check if feed exists and has data
+            feed = data.get('feed', [])
+            if not feed:
+                logger.warning("Alpha Vantage returned empty feed - may be rate limited or no data available")
+                return []
+            
             news_items = []
-
-            for item in data.get('feed', []):
+            for item in feed:
                 news_items.append({
                     'title': item.get('title', ''),
                     'summary': item.get('summary', ''),

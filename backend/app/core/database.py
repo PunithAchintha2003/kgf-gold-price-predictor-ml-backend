@@ -4,6 +4,8 @@ import os
 from contextlib import contextmanager
 from typing import Optional
 import logging
+import threading
+import queue
 
 # PostgreSQL support
 try:
@@ -54,8 +56,10 @@ def init_postgresql_pool() -> bool:
                 'neon.tech' in settings.postgresql_host.lower()):
             connection_params['sslmode'] = 'require'
 
+        # Use smaller pool size to avoid exhausting connections
+        # Reduced from 50 to 20 to prevent connection exhaustion
         _postgresql_pool = psycopg2.pool.SimpleConnectionPool(
-            2, 50,  # min and max connections (increased to handle concurrent requests)
+            2, 20,  # min and max connections
             **connection_params
         )
         if _postgresql_pool:
@@ -98,6 +102,9 @@ def _is_connection_alive(conn) -> bool:
     if not conn or not POSTGRESQL_AVAILABLE:
         return False
     try:
+        # Check connection status first (faster than executing a query)
+        if hasattr(conn, 'closed') and conn.closed:
+            return False
         # Try to execute a simple query to check if connection is alive
         cursor = conn.cursor()
         cursor.execute("SELECT 1")
@@ -107,7 +114,8 @@ def _is_connection_alive(conn) -> bool:
     except Exception as e:
         # Check for PostgreSQL-specific errors
         if POSTGRESQL_AVAILABLE:
-            if isinstance(e, (psycopg2.OperationalError, psycopg2.InterfaceError)):
+            if isinstance(e, (psycopg2.OperationalError, psycopg2.InterfaceError, 
+                            psycopg2.DatabaseError, psycopg2.ProgrammingError)):
                 return False
         # Other exceptions might indicate connection issues
         if isinstance(e, AttributeError):
@@ -116,6 +124,54 @@ def _is_connection_alive(conn) -> bool:
         # Log for debugging
         logger.debug(f"Connection health check exception: {e}")
         return False
+
+
+def _get_connection_with_timeout(pool_instance, timeout: float = 5.0):
+    """Get a connection from the pool with a timeout using threading
+    
+    Args:
+        pool_instance: The connection pool instance
+        timeout: Maximum time to wait for a connection in seconds
+        
+    Returns:
+        Connection object or None if timeout occurred
+        
+    Raises:
+        Exception: If pool error occurs (not timeout)
+    """
+    if pool_instance is None:
+        raise Exception("Connection pool is not initialized")
+    
+    result_queue = queue.Queue()
+    exception_queue = queue.Queue()
+    
+    def get_conn():
+        try:
+            conn = pool_instance.getconn()
+            result_queue.put(conn)
+        except Exception as e:
+            exception_queue.put(e)
+    
+    thread = threading.Thread(target=get_conn, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+    
+    if thread.is_alive():
+        # Thread is still running, timeout occurred
+        # Note: daemon thread will be cleaned up automatically
+        logger.warning(f"getconn() timed out after {timeout}s")
+        return None
+    
+    # Check for exceptions first (exceptions take priority)
+    if not exception_queue.empty():
+        raise exception_queue.get()
+    
+    # Check for result
+    if not result_queue.empty():
+        return result_queue.get()
+    
+    # No result and no exception - timeout occurred
+    return None
 
 
 @contextmanager
@@ -135,16 +191,31 @@ def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3, timeo
             # Use PostgreSQL with retry logic and timeout
             import time
             start_time = time.time()
+            per_attempt_timeout = max(2.0, timeout / max_retries)  # Divide timeout across attempts
             
             for attempt in range(max_retries):
                 try:
-                    # Check if we've exceeded timeout
-                    if time.time() - start_time > timeout:
+                    # Check if we've exceeded overall timeout
+                    elapsed = time.time() - start_time
+                    if elapsed > timeout:
                         raise Exception(f"Connection timeout after {timeout}s")
+                    
+                    # Calculate remaining timeout for this attempt
+                    remaining_timeout = timeout - elapsed
+                    attempt_timeout = min(per_attempt_timeout, remaining_timeout)
                     
                     # Try to get connection with timeout handling
                     try:
-                        conn = _postgresql_pool.getconn()
+                        conn = _get_connection_with_timeout(_postgresql_pool, timeout=attempt_timeout)
+                        if conn is None:
+                            # Timeout occurred
+                            if attempt < max_retries - 1:
+                                logger.debug(
+                                    f"Connection timeout, attempt {attempt + 1}/{max_retries}")
+                                time.sleep(0.5)
+                                continue
+                            else:
+                                raise Exception(f"Connection timeout after {timeout}s")
                     except Exception as pool_error:
                         # Pool exhausted or other pool error
                         error_msg = str(pool_error).lower()
@@ -169,16 +240,19 @@ def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3, timeo
                             logger.debug(
                                 f"Connection from pool is dead, attempt {attempt + 1}/{max_retries} - getting fresh connection")
                             try:
+                                # Try to close the dead connection
                                 conn.close()
                             except:
                                 pass
-                            # Don't return dead connection to pool
+                            # Don't return dead connection to pool - it's already closed
                             conn = None
                             if attempt < max_retries - 1:
+                                time.sleep(0.3)  # Brief pause before retry
                                 continue
                             else:
                                 raise Exception(
                                     "Failed to get a valid connection from pool after retries")
+                        # Connection is valid, yield it
                         yield conn
                         break
                     else:
@@ -243,18 +317,12 @@ def get_db_connection(db_path: Optional[str] = None, max_retries: int = 3, timeo
                             except:
                                 pass
                     except Exception as pool_error:
-                        # Pool error (e.g., connection not from this pool)
+                        # Pool error (e.g., connection not from this pool, pool full, etc.)
                         error_msg = str(pool_error).lower()
-                        if "pool" in error_msg:
+                        if "pool" in error_msg or "connection" in error_msg:
                             logger.warning(f"Error returning connection to pool: {pool_error}")
                         else:
                             logger.debug(f"Error returning connection to pool: {pool_error}")
-                        try:
-                            conn.close()
-                        except:
-                            pass
-                    except Exception as e:
-                        logger.error(f"Error returning connection to pool: {e}")
                         # If pool is full or connection is bad, close it
                         try:
                             conn.close()
