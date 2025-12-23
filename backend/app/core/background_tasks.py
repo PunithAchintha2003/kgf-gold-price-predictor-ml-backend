@@ -296,6 +296,161 @@ async def auto_update_pending_predictions(
             continue  # Continue loop
 
 
+async def auto_generate_daily_prediction(
+    market_data_service: "MarketDataService",
+    prediction_service: "PredictionService",
+    prediction_repo: "PredictionRepository",
+    task_manager: BackgroundTaskManager
+):
+    """
+    Background task to automatically generate daily predictions when market opens.
+    
+    Features:
+    - Runs daily at market open time (default: 8 AM)
+    - Skips weekends (Saturday and Sunday)
+    - Generates prediction for next trading day
+    - Fetches news sentiment during generation
+    - Saves prediction to database
+    - Only generates once per day
+    """
+    task_name = "auto_generate_daily_prediction"
+    
+    # Check if auto-predict is enabled
+    if not settings.auto_predict_enabled:
+        logger.info("📊 Auto-prediction generation is disabled via configuration")
+        return
+    
+    # Wait for startup delay
+    try:
+        await asyncio.wait_for(
+            task_manager.shutdown_event.wait(),
+            timeout=float(settings.auto_predict_startup_delay)
+        )
+        return  # Shutdown requested during startup delay
+    except asyncio.TimeoutError:
+        pass  # Continue after delay
+    
+    logger.info(
+        f"📊 Auto-prediction task started - will generate predictions daily at {settings.auto_predict_hour}:00 (skips weekends)")
+    
+    max_consecutive_failures = 3
+    last_prediction_date = None
+    
+    while not task_manager.shutdown_event.is_set():
+        try:
+            # Initialize/update task state
+            if task_name not in task_manager.task_states:
+                task_manager.task_states[task_name] = {
+                    "status": "running",
+                    "last_run": None,
+                    "last_prediction_date": None,
+                    "last_error": None,
+                    "run_count": 0,
+                    "prediction_count": 0,
+                    "error_count": 0
+                }
+            state = task_manager.task_states[task_name]
+            state["status"] = "running"
+            state["last_run"] = datetime.now().isoformat()
+            
+            current_time = datetime.now()
+            current_hour = current_time.hour
+            current_date = current_time.date()
+            
+            # Check if it's a weekend (skip Saturday and Sunday)
+            if current_time.weekday() >= 5:  # Saturday = 5, Sunday = 6
+                # Calculate days until Monday
+                if current_time.weekday() == 5:  # Saturday
+                    days_until_monday = 2  # Wait 2 days until Monday
+                else:  # Sunday
+                    days_until_monday = 1  # Wait 1 day until Monday
+                wait_seconds = days_until_monday * 86400  # Convert days to seconds
+                logger.debug(f"⏸️ Weekend detected (day {current_time.weekday()}). Waiting {days_until_monday} day(s) until next Monday...")
+                try:
+                    await asyncio.wait_for(
+                        task_manager.shutdown_event.wait(),
+                        timeout=min(wait_seconds, 86400.0)  # Max 24 hours per wait
+                    )
+                    break  # Shutdown requested
+                except asyncio.TimeoutError:
+                    continue  # Continue loop after wait
+            
+            # Check if it's time to generate prediction (at the configured hour, once per day)
+            should_generate = (
+                current_hour == settings.auto_predict_hour and
+                last_prediction_date != current_date
+            )
+            
+            if should_generate:
+                logger.info(f"📊 Generating daily prediction for next trading day...")
+                try:
+                    # Get next trading day (skip weekends)
+                    from ..services.market_data_service import get_next_trading_day
+                    next_trading_day_dt = get_next_trading_day()
+                    next_day = next_trading_day_dt.strftime("%Y-%m-%d")
+                    
+                    # Check if prediction already exists for this date
+                    if prediction_repo.prediction_exists_for_date(next_day):
+                        logger.info(f"✅ Prediction already exists for {next_day}, skipping generation")
+                        last_prediction_date = current_date
+                        state["last_prediction_date"] = next_day
+                        # Wait until next day
+                        await asyncio.sleep(3600)  # Wait 1 hour before checking again
+                        continue
+                    
+                    # Generate prediction (this will fetch news sentiment)
+                    predicted_price = prediction_service.predict_next_day()
+                    
+                    if predicted_price is None:
+                        logger.error("❌ Failed to generate prediction - service returned None")
+                        consecutive_failures += 1
+                        if consecutive_failures >= max_consecutive_failures:
+                            logger.error(f"❌ Too many consecutive failures ({consecutive_failures}), waiting before retry")
+                            await asyncio.sleep(3600)  # Wait 1 hour
+                            consecutive_failures = 0
+                        continue
+                    
+                    # Get prediction method
+                    prediction_method = prediction_service.get_model_display_name()
+                    
+                    # Save prediction to database
+                    prediction_repo.save_prediction(
+                        next_day, predicted_price, prediction_method=prediction_method
+                    )
+                    
+                    logger.info(
+                        f"✅ Generated and saved prediction for {next_day}: ${predicted_price:.2f} (Method: {prediction_method})")
+                    
+                    last_prediction_date = current_date
+                    state["last_prediction_date"] = next_day
+                    state["prediction_count"] = state.get("prediction_count", 0) + 1
+                    consecutive_failures = 0  # Reset on success
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error generating daily prediction: {e}", exc_info=True)
+                    consecutive_failures += 1
+                    state["error_count"] = state.get("error_count", 0) + 1
+                    state["last_error"] = str(e)
+                    
+                    if consecutive_failures >= max_consecutive_failures:
+                        logger.error(f"❌ Too many consecutive failures ({consecutive_failures}), waiting before retry")
+                        await asyncio.sleep(3600)  # Wait 1 hour
+                        consecutive_failures = 0
+            else:
+                # Not time yet, wait and check again
+                # Calculate seconds until next check (check every hour)
+                await asyncio.sleep(3600)  # Check every hour
+                
+        except asyncio.CancelledError:
+            logger.debug(f"Task {task_name} cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Unexpected error in {task_name}: {e}", exc_info=True)
+            await asyncio.sleep(60)  # Brief pause before retry
+    
+    logger.info(f"🛑 {task_name} task stopped")
+
+
 async def auto_retrain_model(
     prediction_service: "PredictionService",
     prediction_repo: "PredictionRepository",

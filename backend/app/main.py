@@ -11,7 +11,8 @@ from .core.dependencies import set_services
 from .core.background_tasks import (
     broadcast_daily_data,
     auto_update_pending_predictions,
-    auto_retrain_model
+    auto_retrain_model,
+    auto_generate_daily_prediction
 )
 from .core.task_manager import BackgroundTaskManager
 from .core.websocket import ConnectionManager
@@ -508,6 +509,21 @@ async def startup_event():
                 f"🔄 Auto-update task started: pending predictions will be updated every {settings.auto_update_interval}s")
         else:
             logger.info("🔄 Auto-update task is disabled via configuration")
+
+        # Start auto-prediction generation task (daily prediction generation at market open)
+        if settings.auto_predict_enabled:
+            predict_task = asyncio.create_task(
+                auto_generate_daily_prediction(
+                    market_data_service, prediction_service, prediction_repo, task_manager
+                )
+            )
+            task_manager.register_task(
+                "auto_generate_daily_prediction", predict_task
+            )
+            logger.info(
+                f"📊 Auto-prediction task started: predictions will be generated daily at {settings.auto_predict_hour}:00 (skips weekends)")
+        else:
+            logger.info("📊 Auto-prediction task is disabled via configuration")
 
         # Start auto-retrain task (daily model retraining)
         if settings.auto_retrain_enabled:
