@@ -27,8 +27,9 @@ from .core.logging_config import setup_logging, get_logger
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Optional
+from typing import Optional, AsyncGenerator
 import json
 import asyncio
 import warnings
@@ -61,22 +62,172 @@ set_services(
     exchange_service=exchange_service
 )
 
-# Initialize database
-if settings.use_postgresql:
-    if init_postgresql_pool():
-        logger.debug("PostgreSQL database connected")
-    else:
-        logger.warning("PostgreSQL failed - using SQLite")
-        settings.use_postgresql = False
+# Database initialization will happen in lifespan function
+# to ensure it completes before any database queries
 
-init_database()
-init_backup_database()
+# Initialize WebSocket connection manager
+manager = ConnectionManager()
 
-# Create FastAPI app
+# Initialize background task manager
+task_manager = BackgroundTaskManager()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """
+    Application lifespan context manager
+    Handles startup and shutdown with proper error handling
+    """
+    # Startup
+    try:
+        logger.info(f"🚀 Server starting in {settings.environment} mode")
+
+        # Initialize database first, before any queries
+        try:
+            if settings.use_postgresql:
+                if init_postgresql_pool():
+                    logger.debug("PostgreSQL database connected")
+                else:
+                    logger.warning("PostgreSQL failed - using SQLite")
+                    settings.use_postgresql = False
+            
+            init_database()
+            init_backup_database()
+            logger.info("✅ Database initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Database initialization failed: {e}", exc_info=True)
+            raise
+
+        # Log system configuration
+        logger.info(f"Environment: {settings.environment}")
+        logger.info(f"Log Level: {settings.log_level.upper()}")
+        logger.info(
+            f"Database: {'PostgreSQL' if settings.use_postgresql else 'SQLite'}")
+        logger.info(
+            f"Auto-update: {'Enabled' if settings.auto_update_enabled else 'Disabled'}")
+
+        # Log ML model information
+        model_info = prediction_service.get_model_info()
+        logger.info(
+            f"🤖 ML Model: {model_info.get('active_model', 'No Model Available')}")
+        
+        # Show both R² scores clearly
+        training_r2 = model_info.get('training_r2_score')
+        live_r2 = model_info.get('live_r2_score')
+        
+        if training_r2 is not None:
+            logger.info(f"📊 Training R² (from model): {training_r2:.4f} ({training_r2*100:.2f}%)")
+        if live_r2 is not None:
+            live_stats = model_info.get('live_accuracy_stats', {})
+            eval_count = live_stats.get('evaluated_predictions', 0)
+            logger.info(f"📈 Live R² (from {eval_count} predictions): {live_r2:.4f} ({live_r2*100:.2f}%)")
+        
+        selected_count = model_info.get('selected_features_count', 0)
+        total_count = model_info.get(
+            'total_features', model_info.get('features_count', 0))
+        if total_count > 0:
+            logger.info(f"🔧 Features: {selected_count}/{total_count} selected")
+        if model_info.get('selected_features'):
+            top_features = ', '.join(model_info['selected_features'][:3])
+            logger.info(f"⭐ Top Features: {top_features}...")
+        if model_info.get('fallback_available'):
+            logger.info("🔄 Fallback model: Available (Lasso Regression)")
+
+        # Start background tasks with proper registration
+        broadcast_task = asyncio.create_task(
+            broadcast_daily_data(manager, market_data_service, task_manager)
+        )
+        task_manager.register_task("broadcast_daily_data", broadcast_task)
+        logger.debug("Background task 'broadcast_daily_data' registered")
+
+        if settings.auto_update_enabled:
+            update_task = asyncio.create_task(
+                auto_update_pending_predictions(
+                    market_data_service, prediction_repo, task_manager
+                )
+            )
+            task_manager.register_task(
+                "auto_update_pending_predictions", update_task
+            )
+            logger.info(
+                f"🔄 Auto-update task started: pending predictions will be updated every {settings.auto_update_interval}s")
+        else:
+            logger.info("🔄 Auto-update task is disabled via configuration")
+
+        # Start auto-prediction generation task (daily prediction generation at market open)
+        if settings.auto_predict_enabled:
+            predict_task = asyncio.create_task(
+                auto_generate_daily_prediction(
+                    market_data_service, prediction_service, prediction_repo, task_manager
+                )
+            )
+            task_manager.register_task(
+                "auto_generate_daily_prediction", predict_task
+            )
+            logger.info(
+                f"📊 Auto-prediction task started: predictions will be generated daily at {settings.auto_predict_hour}:00 (skips weekends)")
+        else:
+            logger.info("📊 Auto-prediction task is disabled via configuration")
+
+        # Start auto-retrain task (daily model retraining)
+        if settings.auto_retrain_enabled:
+            retrain_task = asyncio.create_task(
+                auto_retrain_model(
+                    prediction_service, prediction_repo, task_manager
+                )
+            )
+            task_manager.register_task(
+                "auto_retrain_model", retrain_task
+            )
+            logger.info(
+                f"🤖 Auto-retrain task started: model will retrain daily at {settings.auto_retrain_hour}:00")
+        else:
+            logger.info("🤖 Auto-retrain task is disabled via configuration")
+
+        logger.info("✅ Ready - API available at http://localhost:8001")
+
+    except Exception as e:
+        logger.error(f"Failed to start application: {e}", exc_info=True)
+        raise
+
+    yield
+
+    # Shutdown
+    try:
+        logger.info("🛑 Server shutting down")
+
+        # Shutdown background tasks with timeout to prevent hanging
+        try:
+            await asyncio.wait_for(task_manager.shutdown(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Task shutdown timed out, forcing cancellation")
+        except asyncio.CancelledError:
+            logger.debug("Task shutdown cancelled (expected during hot reload)")
+
+        # Close WebSocket connections with timeout
+        try:
+            await asyncio.wait_for(manager.disconnect_all(), timeout=2.0)
+        except asyncio.TimeoutError:
+            logger.warning("WebSocket disconnect timed out")
+        except asyncio.CancelledError:
+            logger.debug("WebSocket disconnect cancelled (expected during hot reload)")
+
+        logger.info("✅ Shutdown complete")
+
+    except asyncio.CancelledError:
+        # This is expected during shutdown/hot reload, don't log as error
+        logger.debug("Shutdown cancelled (expected during hot reload)")
+        # Don't re-raise - let the framework handle it
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}", exc_info=True)
+
+
+# Create FastAPI app with lifespan context manager
 app = FastAPI(
     title="XAU/USD Real-time Data API",
     version="1.0.0",
-    description=f"Gold price prediction API running in {settings.environment} environment"
+    description=f"Gold price prediction API running in {settings.environment} environment",
+    lifespan=lifespan
 )
 
 # Add CORS middleware
@@ -95,8 +246,8 @@ app.add_middleware(
 # Include API routes
 app.include_router(api_router)
 
-# Initialize WebSocket connection manager
-manager = ConnectionManager()
+# Set task manager for health check endpoint
+set_task_manager(task_manager)
 
 # Legacy health endpoint for backward compatibility
 
@@ -112,10 +263,6 @@ async def health_check_legacy():
 async def health_check_head_legacy():
     """Handle HEAD requests to health endpoint"""
     return Response(status_code=200)
-
-# Initialize background task manager
-task_manager = BackgroundTaskManager()
-set_task_manager(task_manager)  # Set for health check endpoint
 
 
 # Root endpoints
@@ -443,127 +590,6 @@ async def update_pending_predictions_legacy():
 async def get_exchange_rate_legacy(from_currency: str, to_currency: str):
     """Get exchange rate between currencies (legacy endpoint)"""
     return exchange_service.get_exchange_rate(from_currency, to_currency)
-
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    Application startup event handler
-    Industry-standard startup sequence with proper error handling
-    """
-    try:
-        logger.info(f"🚀 Server starting in {settings.environment} mode")
-
-        # Log system configuration
-        logger.info(f"Environment: {settings.environment}")
-        logger.info(f"Log Level: {settings.log_level.upper()}")
-        logger.info(
-            f"Database: {'PostgreSQL' if settings.use_postgresql else 'SQLite'}")
-        logger.info(
-            f"Auto-update: {'Enabled' if settings.auto_update_enabled else 'Disabled'}")
-
-        # Log ML model information
-        model_info = prediction_service.get_model_info()
-        logger.info(
-            f"🤖 ML Model: {model_info.get('active_model', 'No Model Available')}")
-        
-        # Show both R² scores clearly
-        training_r2 = model_info.get('training_r2_score')
-        live_r2 = model_info.get('live_r2_score')
-        
-        if training_r2 is not None:
-            logger.info(f"📊 Training R² (from model): {training_r2:.4f} ({training_r2*100:.2f}%)")
-        if live_r2 is not None:
-            live_stats = model_info.get('live_accuracy_stats', {})
-            eval_count = live_stats.get('evaluated_predictions', 0)
-            logger.info(f"📈 Live R² (from {eval_count} predictions): {live_r2:.4f} ({live_r2*100:.2f}%)")
-        
-        selected_count = model_info.get('selected_features_count', 0)
-        total_count = model_info.get(
-            'total_features', model_info.get('features_count', 0))
-        if total_count > 0:
-            logger.info(f"🔧 Features: {selected_count}/{total_count} selected")
-        if model_info.get('selected_features'):
-            top_features = ', '.join(model_info['selected_features'][:3])
-            logger.info(f"⭐ Top Features: {top_features}...")
-        if model_info.get('fallback_available'):
-            logger.info("🔄 Fallback model: Available (Lasso Regression)")
-
-        # Start background tasks with proper registration
-        broadcast_task = asyncio.create_task(
-            broadcast_daily_data(manager, market_data_service, task_manager)
-        )
-        task_manager.register_task("broadcast_daily_data", broadcast_task)
-        logger.debug("Background task 'broadcast_daily_data' registered")
-
-        if settings.auto_update_enabled:
-            update_task = asyncio.create_task(
-                auto_update_pending_predictions(
-                    market_data_service, prediction_repo, task_manager
-                )
-            )
-            task_manager.register_task(
-                "auto_update_pending_predictions", update_task
-            )
-            logger.info(
-                f"🔄 Auto-update task started: pending predictions will be updated every {settings.auto_update_interval}s")
-        else:
-            logger.info("🔄 Auto-update task is disabled via configuration")
-
-        # Start auto-prediction generation task (daily prediction generation at market open)
-        if settings.auto_predict_enabled:
-            predict_task = asyncio.create_task(
-                auto_generate_daily_prediction(
-                    market_data_service, prediction_service, prediction_repo, task_manager
-                )
-            )
-            task_manager.register_task(
-                "auto_generate_daily_prediction", predict_task
-            )
-            logger.info(
-                f"📊 Auto-prediction task started: predictions will be generated daily at {settings.auto_predict_hour}:00 (skips weekends)")
-        else:
-            logger.info("📊 Auto-prediction task is disabled via configuration")
-
-        # Start auto-retrain task (daily model retraining)
-        if settings.auto_retrain_enabled:
-            retrain_task = asyncio.create_task(
-                auto_retrain_model(
-                    prediction_service, prediction_repo, task_manager
-                )
-            )
-            task_manager.register_task(
-                "auto_retrain_model", retrain_task
-            )
-            logger.info(
-                f"🤖 Auto-retrain task started: model will retrain daily at {settings.auto_retrain_hour}:00")
-        else:
-            logger.info("🤖 Auto-retrain task is disabled via configuration")
-
-        logger.info("✅ Ready - API available at http://localhost:8001")
-
-    except Exception as e:
-        logger.error(f"Failed to start application: {e}", exc_info=True)
-        raise
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """
-    Application shutdown event handler
-    Industry-standard graceful shutdown with resource cleanup
-    """
-    try:
-        logger.info("🛑 Server shutting down")
-
-        # Shutdown background tasks
-        await task_manager.shutdown()
-
-        # Close WebSocket connections
-        await manager.disconnect_all()
-
-    except Exception as e:
-        logger.error(f"Error during shutdown: {e}", exc_info=True)
 
 
 if __name__ == "__main__":

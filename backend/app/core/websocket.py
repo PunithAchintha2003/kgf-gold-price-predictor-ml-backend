@@ -46,6 +46,11 @@ class ConnectionManager:
                 await connection.close()
                 self.active_connections.remove(connection)
                 disconnected_count += 1
+            except asyncio.CancelledError:
+                # Expected during shutdown, just remove from list
+                if connection in self.active_connections:
+                    self.active_connections.remove(connection)
+                # Don't re-raise - allow graceful shutdown
             except Exception as e:
                 logger.warning(f"Error closing WebSocket connection: {e}")
                 # Remove from list even if close failed

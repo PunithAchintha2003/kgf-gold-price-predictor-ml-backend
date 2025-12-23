@@ -56,5 +56,7 @@ class BackgroundTaskManager:
                     await task
                 except asyncio.CancelledError:
                     logger.debug(f"Task {name} cancelled successfully")
+                except Exception as e:
+                    logger.warning(f"Error while cancelling task {name}: {e}")
 
         logger.info("✅ All background tasks shut down")
