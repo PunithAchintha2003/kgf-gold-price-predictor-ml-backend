@@ -315,6 +315,39 @@ class PredictionRepository:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
 
+                # Check if predictions table exists
+                try:
+                    if db_type == "postgresql":
+                        cursor.execute("""
+                            SELECT EXISTS (
+                                SELECT FROM information_schema.tables 
+                                WHERE table_name = 'predictions'
+                            )
+                        """)
+                    else:
+                        cursor.execute("""
+                            SELECT name FROM sqlite_master 
+                            WHERE type='table' AND name='predictions'
+                        """)
+                    table_exists = cursor.fetchone()
+                    if not table_exists or (db_type == "postgresql" and not table_exists[0]):
+                        logger.debug("Predictions table does not exist yet, returning default stats")
+                        return {
+                            'average_accuracy': 0.0,
+                            'r2_score': None,
+                            'total_predictions': 0,
+                            'evaluated_predictions': 0
+                        }
+                except Exception as e:
+                    logger.debug(f"Error checking if predictions table exists: {e}")
+                    # If we can't check, assume table doesn't exist
+                    return {
+                        'average_accuracy': 0.0,
+                        'r2_score': None,
+                        'total_predictions': 0,
+                        'evaluated_predictions': 0
+                    }
+
                 # Get accuracy for unique predictions with actual prices (excluding weekends)
                 if db_type == "postgresql":
                     # Optimized query using window function
@@ -484,7 +517,12 @@ class PredictionRepository:
                 'evaluated_predictions': evaluated_count
             }
         except Exception as e:
-            logger.error(f"Error getting accuracy stats: {e}", exc_info=True)
+            # Check if it's a "table doesn't exist" error
+            error_msg = str(e).lower()
+            if "no such table" in error_msg or "does not exist" in error_msg or "relation" in error_msg:
+                logger.debug(f"Predictions table does not exist yet: {e}")
+            else:
+                logger.warning(f"Error getting accuracy stats: {e}", exc_info=True)
             # Return default values on error
             return {
                 'average_accuracy': 0.0,
