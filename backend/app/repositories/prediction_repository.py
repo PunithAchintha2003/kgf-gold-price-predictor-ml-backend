@@ -634,6 +634,37 @@ class PredictionRepository:
         return pending
 
     @staticmethod
+    def update_prediction_with_actual_price(
+        prediction_date: str,
+        actual_price: float
+    ) -> bool:
+        """Update an existing prediction with the actual price and recalculate accuracy"""
+        try:
+            actual_price = float(actual_price) if actual_price is not None else None
+            if actual_price is None:
+                logger.warning(f"Cannot update prediction for {prediction_date}: actual_price is None")
+                return False
+
+            # Get the existing prediction to preserve other fields
+            existing_pred = PredictionRepository.get_prediction_details_for_date(prediction_date)
+            if not existing_pred:
+                logger.warning(f"No prediction found for {prediction_date} to update")
+                return False
+            
+            # Use save_prediction to update (it handles upserts)
+            # This preserves predicted_price, prediction_method, and prediction_reasons
+            return PredictionRepository.save_prediction(
+                prediction_date=prediction_date,
+                predicted_price=existing_pred.get('predicted_price'),
+                actual_price=actual_price,
+                prediction_method=existing_pred.get('method'),
+                prediction_reasons=existing_pred.get('prediction_reasons')
+            )
+        except Exception as e:
+            logger.error(f"Error updating prediction with actual price for {prediction_date}: {e}", exc_info=True)
+            return False
+
+    @staticmethod
     def get_accuracy_visualization_data(days: int = 90) -> Dict:
         """Get detailed accuracy data for visualization - OPTIMIZED"""
         cache_key = f"accuracy_viz_{days}"
