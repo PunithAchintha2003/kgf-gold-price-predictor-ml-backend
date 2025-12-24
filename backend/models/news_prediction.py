@@ -8,7 +8,7 @@ import pandas as pd
 import requests
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import re
 import warnings
 # Suppress SyntaxWarnings from textblob library
@@ -74,6 +74,127 @@ class NewsSentimentAnalyzer:
         news_data.extend(self._fetch_rss_news_data(days_back))
 
         return news_data
+
+    def fetch_news_data_excluding_alpha_vantage(self, days_back: int = 7) -> List[Dict]:
+        """
+        Fetch news data from multiple sources EXCLUDING Alpha Vantage
+        This is used for sending news to Gemini AI (Alpha Vantage data excluded)
+        
+        Args:
+            days_back: Number of days to look back for news
+            
+        Returns:
+            List of news articles (excluding Alpha Vantage)
+        """
+        news_data = []
+
+        # Fetch from NewsAPI (if key available)
+        if self.news_api_key:
+            news_data.extend(self._fetch_newsapi_data(days_back))
+
+        # Fetch from Yahoo Finance news
+        news_data.extend(self._fetch_yahoo_news_data(days_back))
+
+        # Fetch from RSS feeds
+        news_data.extend(self._fetch_rss_news_data(days_back))
+
+        return news_data
+
+    def get_aggregated_sentiment_for_gemini(self, days_back: int = 7) -> Dict[str, Any]:
+        """
+        Get aggregated sentiment metrics from filtered news (excluding Alpha Vantage)
+        for sending to Gemini AI
+        
+        Args:
+            days_back: Number of days to look back for news
+            
+        Returns:
+            Dictionary with aggregated sentiment metrics and top headlines
+        """
+        # Fetch news excluding Alpha Vantage
+        news_data = self.fetch_news_data_excluding_alpha_vantage(days_back)
+        
+        if not news_data:
+            return {
+                "combined_sentiment": 0.0,
+                "news_volume": 0,
+                "sentiment_trend": 0.0,
+                "headlines": []
+            }
+        
+        # Analyze sentiment
+        sentiment_df = self.analyze_sentiment(news_data)
+        
+        if sentiment_df.empty:
+            return {
+                "combined_sentiment": 0.0,
+                "news_volume": 0,
+                "sentiment_trend": 0.0,
+                "headlines": []
+            }
+        
+        # Aggregate sentiment metrics
+        combined_sentiment = float(sentiment_df['combined_sentiment'].mean())
+        news_volume = len(news_data)
+        
+        # Calculate sentiment trend (recent vs older)
+        if len(sentiment_df) >= 3:
+            recent_sentiment = sentiment_df['combined_sentiment'].tail(3).mean()
+            older_sentiment = sentiment_df['combined_sentiment'].head(max(1, len(sentiment_df) - 3)).mean()
+            sentiment_trend = float(recent_sentiment - older_sentiment)
+        else:
+            sentiment_trend = 0.0
+        
+        # Get top 5 headlines (most recent, sorted by date)
+        headlines = []
+        try:
+            # Sort by published_at if available
+            news_with_dates = []
+            for item in news_data:
+                pub_date = item.get('published_at', '')
+                if pub_date:
+                    try:
+                        # Try to parse the date
+                        if isinstance(pub_date, str):
+                            try:
+                                from dateutil import parser
+                                parsed_date = parser.parse(pub_date)
+                            except ImportError:
+                                # Fallback to datetime parsing
+                                try:
+                                    parsed_date = datetime.fromisoformat(pub_date.replace('Z', '+00:00'))
+                                except:
+                                    parsed_date = datetime.strptime(pub_date.split('T')[0], '%Y-%m-%d')
+                        else:
+                            parsed_date = pub_date
+                        news_with_dates.append((parsed_date, item))
+                    except:
+                        news_with_dates.append((datetime.now(), item))
+                else:
+                    news_with_dates.append((datetime.now(), item))
+            
+            # Sort by date (most recent first)
+            news_with_dates.sort(key=lambda x: x[0], reverse=True)
+            
+            # Get top 5 headlines
+            for date, item in news_with_dates[:5]:
+                title = item.get('title', '').strip()
+                if title:
+                    headlines.append(title)
+        except Exception as e:
+            logger.debug(f"Error sorting headlines: {e}")
+            # Fallback: just get first 5 titles
+            for item in news_data[:5]:
+                title = item.get('title', '').strip()
+                if title:
+                    headlines.append(title)
+        
+        return {
+            "combined_sentiment": combined_sentiment,
+            "news_volume": news_volume,
+            "sentiment_trend": sentiment_trend,
+            "headlines": headlines[:5]  # Top 5 only
+        }
 
     def _fetch_newsapi_data(self, days_back: int) -> List[Dict]:
         """Fetch news from NewsAPI"""

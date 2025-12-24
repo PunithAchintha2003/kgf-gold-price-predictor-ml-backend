@@ -22,29 +22,29 @@ def set_services(
     _exchange_service = exchange_service
 
 
-def get_market_data_service():
-    """Get market data service instance"""
+async def get_market_data_service():
+    """Get market data service instance (async to prevent CancelledError during shutdown)"""
     if _market_data_service is None:
         raise RuntimeError("Market data service not initialized")
     return _market_data_service
 
 
-def get_prediction_service():
-    """Get prediction service instance"""
+async def get_prediction_service():
+    """Get prediction service instance (async to prevent CancelledError during shutdown)"""
     if _prediction_service is None:
         raise RuntimeError("Prediction service not initialized")
     return _prediction_service
 
 
-def get_prediction_repo():
-    """Get prediction repository instance"""
+async def get_prediction_repo():
+    """Get prediction repository instance (async to prevent CancelledError during shutdown)"""
     if _prediction_repo is None:
         raise RuntimeError("Prediction repository not initialized")
     return _prediction_repo
 
 
-def get_exchange_service():
-    """Get exchange service instance"""
+async def get_exchange_service():
+    """Get exchange service instance (async to prevent CancelledError during shutdown)"""
     if _exchange_service is None:
         raise RuntimeError("Exchange service not initialized")
     return _exchange_service

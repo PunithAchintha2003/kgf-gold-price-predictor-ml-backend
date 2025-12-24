@@ -17,7 +17,8 @@ class PredictionRepository:
         prediction_date: str,
         predicted_price: float,
         actual_price: Optional[float] = None,
-        prediction_method: Optional[str] = None
+        prediction_method: Optional[str] = None,
+        prediction_reasons: Optional[str] = None
     ) -> bool:
         """Save prediction to database with accuracy calculation"""
         try:
@@ -46,34 +47,67 @@ class PredictionRepository:
                     ''', (prediction_date,))
                     existing = cursor.fetchone()
 
+                    # Check if prediction_reasons column exists
+                    cursor.execute('''
+                        SELECT column_name FROM information_schema.columns 
+                        WHERE table_name = 'predictions' AND column_name = 'prediction_reasons'
+                    ''')
+                    has_prediction_reasons = cursor.fetchone() is not None
+                    
                     if existing:
                         # Update existing prediction
-                        cursor.execute('''
-                            UPDATE predictions
-                            SET predicted_price = %s,
-                                actual_price = %s,
-                                accuracy_percentage = %s,
-                                prediction_method = %s,
-                                updated_at = CURRENT_TIMESTAMP
-                            WHERE prediction_date = %s
-                        ''', (predicted_price, actual_price, accuracy, prediction_method, prediction_date))
+                        if has_prediction_reasons:
+                            cursor.execute('''
+                                UPDATE predictions
+                                SET predicted_price = %s,
+                                    actual_price = %s,
+                                    accuracy_percentage = %s,
+                                    prediction_method = %s,
+                                    prediction_reasons = %s,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE prediction_date = %s
+                            ''', (predicted_price, actual_price, accuracy, prediction_method, prediction_reasons, prediction_date))
+                        else:
+                            cursor.execute('''
+                                UPDATE predictions
+                                SET predicted_price = %s,
+                                    actual_price = %s,
+                                    accuracy_percentage = %s,
+                                    prediction_method = %s,
+                                    updated_at = CURRENT_TIMESTAMP
+                                WHERE prediction_date = %s
+                            ''', (predicted_price, actual_price, accuracy, prediction_method, prediction_date))
                     else:
                         # Insert new prediction
-                        cursor.execute('''
-                            INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage, prediction_method)
-                            VALUES (%s, %s, %s, %s, %s)
-                        ''', (prediction_date, predicted_price, actual_price, accuracy, prediction_method))
+                        if has_prediction_reasons:
+                            cursor.execute('''
+                                INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage, prediction_method, prediction_reasons)
+                                VALUES (%s, %s, %s, %s, %s, %s)
+                            ''', (prediction_date, predicted_price, actual_price, accuracy, prediction_method, prediction_reasons))
+                        else:
+                            cursor.execute('''
+                                INSERT INTO predictions (prediction_date, predicted_price, actual_price, accuracy_percentage, prediction_method)
+                                VALUES (%s, %s, %s, %s, %s)
+                            ''', (prediction_date, predicted_price, actual_price, accuracy, prediction_method))
                 else:
-                    # SQLite - check if prediction_method column exists
+                    # SQLite - check which columns exist
                     try:
                         cursor.execute("PRAGMA table_info(predictions)")
                         columns = [row[1] for row in cursor.fetchall()]
                         has_prediction_method = 'prediction_method' in columns
+                        has_prediction_reasons = 'prediction_reasons' in columns
                     except Exception as e:
-                        logger.debug(f"Error checking for prediction_method column: {e}")
+                        logger.debug(f"Error checking for columns: {e}")
                         has_prediction_method = False
+                        has_prediction_reasons = False
 
-                    if has_prediction_method:
+                    if has_prediction_method and has_prediction_reasons:
+                        cursor.execute('''
+                            INSERT OR REPLACE INTO predictions 
+                            (prediction_date, predicted_price, actual_price, accuracy_percentage, prediction_method, prediction_reasons, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        ''', (prediction_date, predicted_price, actual_price, accuracy, prediction_method, prediction_reasons))
+                    elif has_prediction_method:
                         cursor.execute('''
                             INSERT OR REPLACE INTO predictions 
                             (prediction_date, predicted_price, actual_price, accuracy_percentage, prediction_method, updated_at)
@@ -147,61 +181,59 @@ class PredictionRepository:
 
     @staticmethod
     def get_prediction_details_for_date(prediction_date: str) -> Optional[Dict]:
-        """Get full prediction details (price, method, etc.) for the given date"""
+        """Get full prediction details (price, method, reasons, etc.) for the given date"""
         db_type = get_db_type()
         has_prediction_method = False
+        has_prediction_reasons = False
 
         with get_db_connection() as conn:
             cursor = conn.cursor()
 
-            # Check if prediction_method column exists
+            # Check which columns exist
             try:
                 if db_type == "postgresql":
                     cursor.execute("""
                         SELECT column_name FROM information_schema.columns 
-                        WHERE table_name = 'predictions' AND column_name = 'prediction_method'
+                        WHERE table_name = 'predictions' 
+                        AND column_name IN ('prediction_method', 'prediction_reasons')
                     """)
-                    has_prediction_method = cursor.fetchone() is not None
+                    existing_columns = [row[0] for row in cursor.fetchall()]
+                    has_prediction_method = 'prediction_method' in existing_columns
+                    has_prediction_reasons = 'prediction_reasons' in existing_columns
                 else:
                     cursor.execute("PRAGMA table_info(predictions)")
                     columns = [row[1] for row in cursor.fetchall()]
                     has_prediction_method = 'prediction_method' in columns
+                    has_prediction_reasons = 'prediction_reasons' in columns
             except Exception as e:
-                logger.debug(f"Error checking for prediction_method column: {e}")
+                logger.debug(f"Error checking for columns: {e}")
                 has_prediction_method = False
+                has_prediction_reasons = False
 
-            # Query with or without method column
+            # Build query based on available columns
             try:
+                select_fields = ["predicted_price"]
+                if has_prediction_method:
+                    select_fields.append("prediction_method")
+                if has_prediction_reasons:
+                    select_fields.append("prediction_reasons")
+                
+                select_clause = ", ".join(select_fields)
+                
                 if db_type == "postgresql":
-                    if has_prediction_method:
-                        cursor.execute('''
-                            SELECT predicted_price, prediction_method FROM predictions 
-                            WHERE prediction_date = %s
-                            ORDER BY created_at DESC 
-                            LIMIT 1
-                        ''', (prediction_date,))
-                    else:
-                        cursor.execute('''
-                            SELECT predicted_price FROM predictions 
-                            WHERE prediction_date = %s
-                            ORDER BY created_at DESC 
-                            LIMIT 1
-                        ''', (prediction_date,))
+                    cursor.execute(f'''
+                        SELECT {select_clause} FROM predictions 
+                        WHERE prediction_date = %s
+                        ORDER BY created_at DESC 
+                        LIMIT 1
+                    ''', (prediction_date,))
                 else:
-                    if has_prediction_method:
-                        cursor.execute('''
-                            SELECT predicted_price, prediction_method FROM predictions 
-                            WHERE prediction_date = ?
-                            ORDER BY created_at DESC 
-                            LIMIT 1
-                        ''', (prediction_date,))
-                    else:
-                        cursor.execute('''
-                            SELECT predicted_price FROM predictions 
-                            WHERE prediction_date = ?
-                            ORDER BY created_at DESC 
-                            LIMIT 1
-                        ''', (prediction_date,))
+                    cursor.execute(f'''
+                        SELECT {select_clause} FROM predictions 
+                        WHERE prediction_date = ?
+                        ORDER BY created_at DESC 
+                        LIMIT 1
+                    ''', (prediction_date,))
             except Exception as e:
                 logger.error(f"Error querying prediction details: {e}", exc_info=True)
                 return None
@@ -214,8 +246,19 @@ class PredictionRepository:
             # Build result dictionary
             details = {
                 "predicted_price": float(result[0]) if result[0] is not None else None,
-                "method": result[1] if has_prediction_method and len(result) > 1 else None
             }
+            
+            idx = 1
+            if has_prediction_method and len(result) > idx:
+                details["method"] = result[idx] if result[idx] else None
+                idx += 1
+            else:
+                details["method"] = None
+                
+            if has_prediction_reasons and len(result) > idx:
+                details["prediction_reasons"] = result[idx] if result[idx] else None
+            else:
+                details["prediction_reasons"] = None
             
             return details
 

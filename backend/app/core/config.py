@@ -46,6 +46,9 @@ class Settings:
         self.postgresql_password: Optional[str] = os.getenv(
             "POSTGRESQL_PASSWORD")
 
+        # AI Configuration
+        self.gemini_api_key: Optional[str] = os.getenv("GEMINI_API_KEY")
+
         # Paths
         self.backend_dir: Path = Path(__file__).resolve().parent.parent.parent
         self.data_dir: Path = self.backend_dir / "data"
