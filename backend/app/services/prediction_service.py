@@ -152,7 +152,12 @@ class PredictionService:
                 model_info["live_accuracy_stats"] = live_stats
                 model_info["live_r2_score"] = live_stats.get('r2_score') if live_stats else None
             except Exception as e:
-                logger.warning(f"Could not get live accuracy stats: {e}", exc_info=True)
+                # Only log if it's not a "table doesn't exist" error (expected during startup)
+                error_msg = str(e).lower()
+                if "no such table" not in error_msg and "does not exist" not in error_msg and "relation" not in error_msg:
+                    logger.warning(f"Could not get live accuracy stats: {e}")
+                else:
+                    logger.debug(f"Predictions table not initialized yet (this is normal during startup)")
             
             # Check for News-Enhanced model (Primary)
             try:

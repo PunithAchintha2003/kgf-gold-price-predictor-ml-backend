@@ -137,9 +137,9 @@ class MarketDataService:
                     logger.debug(f"Error checking existing prediction: {e}")
                     pass
 
-            # Get historical predictions and accuracy stats
-            all_historical_predictions = self.prediction_repo.get_historical_predictions(
-                days)
+            # Get historical predictions and accuracy stats in parallel (if possible)
+            # For now, sequential but optimized with caching
+            all_historical_predictions = self.prediction_repo.get_historical_predictions(days)
             # Filter out weekend predictions (Saturday/Sunday) - we don't want to show them
             all_historical_predictions = [
                 p for p in all_historical_predictions

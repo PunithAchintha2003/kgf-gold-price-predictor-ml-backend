@@ -56,10 +56,10 @@ def init_postgresql_pool() -> bool:
                 'neon.tech' in settings.postgresql_host.lower()):
             connection_params['sslmode'] = 'require'
 
-        # Use smaller pool size to avoid exhausting connections
-        # Reduced from 50 to 20 to prevent connection exhaustion
+        # Use optimized pool size from config
         _postgresql_pool = psycopg2.pool.SimpleConnectionPool(
-            2, 20,  # min and max connections
+            settings.postgresql_pool_min_size,
+            settings.postgresql_pool_max_size,
             **connection_params
         )
         if _postgresql_pool:

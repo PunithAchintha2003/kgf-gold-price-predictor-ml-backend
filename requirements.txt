@@ -1,31 +1,43 @@
-# Core API Framework
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-python-multipart==0.0.6
+# Core API Framework - Latest stable versions
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.12
 
-# Data Processing - using pre-built wheels to avoid compilation issues
-pandas>=2.0.0
+# Configuration Management - Industry best practices
+pydantic>=2.9.0
+pydantic-settings>=2.5.0
+python-dotenv>=1.0.1
+
+# Data Processing - Optimized versions
+pandas>=2.2.0
 numpy>=1.26.0
 
 # Machine Learning
-scikit-learn>=1.4.0
-joblib>=1.3.0
+scikit-learn>=1.5.0
+joblib>=1.4.0
 
-# Market Data - Updated yfinance to fix Yahoo Finance blocking issues
+# Market Data - Latest versions for better reliability
 yfinance>=0.2.40
-requests>=2.31.0
+requests>=2.32.0
+httpx>=0.27.0  # Modern async HTTP client
 
-# News Analysis - Updated feedparser to fix Python 3.13 compatibility
-textblob==0.17.1
+# News Analysis
+textblob>=0.17.1
 feedparser>=6.0.11
-certifi>=2023.0.0
+certifi>=2024.0.0
 
-# Database - PostgreSQL support
+# Database - PostgreSQL support (sync and async)
 psycopg2-binary>=2.9.9
+asyncpg>=0.29.0  # Async PostgreSQL driver for better performance
+aiosqlite>=0.20.0  # Async SQLite driver
 
-# Build dependencies to ensure proper compilation
-setuptools>=65.0.0
-wheel>=0.40.0
+# Build dependencies
+setuptools>=75.0.0
+wheel>=0.44.0
 
 # Google Generative AI (Gemini)
-google-generativeai>=0.3.0
+google-generativeai>=0.8.0
+
+# Additional utilities for better performance
+cachetools>=5.3.0  # Advanced caching utilities
+python-json-logger>=2.0.7  # Structured logging

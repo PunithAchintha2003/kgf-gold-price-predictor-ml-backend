@@ -118,41 +118,16 @@ def main():
         )
         
         model_info = prediction_service.get_model_info()
-        print(f"🤖 ML Model: {model_info.get('active_model', 'No Model Available')}")
-        
-        # Show both R² scores clearly
-        training_r2 = model_info.get('training_r2_score')
-        live_r2 = model_info.get('live_r2_score')
-        
-        if training_r2 is not None:
-            print(f"📊 Training R² (from model): {training_r2:.4f} ({training_r2*100:.2f}%)")
-        if live_r2 is not None:
-            live_stats = model_info.get('live_accuracy_stats', {})
-            eval_count = live_stats.get('evaluated_predictions', 0)
-            print(f"📈 Live R² (from {eval_count} predictions): {live_r2:.4f} ({live_r2*100:.2f}%)")
-        
-        selected_count = model_info.get('selected_features_count', 0)
-        total_count = model_info.get('total_features', model_info.get('features_count', 0))
-        if total_count > 0:
-            print(f"🔧 Features: {selected_count}/{total_count} selected")
-        if model_info.get('selected_features'):
-            top_features = ', '.join(model_info['selected_features'][:3])
-            print(f"⭐ Top Features: {top_features}...")
-        if model_info.get('fallback_available'):
-            print("🔄 Fallback model: Available (Lasso Regression)")
+        # Only show essential model name
+        model_name = model_info.get('active_model', 'No Model Available')
+        if "No Model" not in model_name:
+            print(f"🤖 {model_name}")
     except Exception as e:
         print(f"⚠️  Could not load model info: {e}")
         import traceback
         traceback.print_exc()
 
-    # Enable auto-reload in development mode
-    is_development = ENVIRONMENT.lower() == "development"
-    reload_status = "Enabled (Development Mode)" if is_development else "Disabled (Production Mode)"
-    print(f"🔄 Auto-reload: {reload_status}")
-
-    print("📝 Logs: Check terminal output")
-    print(f"🔧 Environment: {ENVIRONMENT}")
-    print(f"🔢 Port: {PORT}")
+    # Only show essential startup info
     print("\n" + "=" * 60)
     print("Press Ctrl+C to stop the server")
     print("=" * 60)
@@ -170,6 +145,7 @@ def main():
             sys.path.insert(0, str(project_root))
 
         # Enable auto-reload in development mode
+        is_development = ENVIRONMENT.lower() == "development"
         reload_enabled = is_development
 
         uvicorn.run(
