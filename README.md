@@ -8,7 +8,6 @@
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 [![Code Style](https://img.shields.io/badge/code%20style-black-000000.svg?style=for-the-badge)](https://github.com/psf/black)
 [![Status](https://img.shields.io/badge/status-production-success.svg?style=for-the-badge)](https://kgf-gold-price-predictor.onrender.com)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg?style=for-the-badge)](https://github.com)
 
 **Production-ready FastAPI backend for XAU/USD (Gold) price prediction using machine learning models with news sentiment analysis.**
 
@@ -107,6 +106,8 @@
 - ✅ Graceful error handling
 - ✅ Exponential backoff for rate limits
 - ✅ Circuit breaker pattern for resilience
+- ✅ Auto-retraining of ML models
+- ✅ Automated prediction generation
 
 ---
 
@@ -150,6 +151,13 @@
 │  │  - LassoGoldPredictor                │   │
 │  │  - NewsEnhancedLassoPredictor         │   │
 │  └──────────────────────────────────────┘   │
+│                                              │
+│  ┌──────────────────────────────────────┐   │
+│  │  Background Tasks                    │   │
+│  │  - Auto-update predictions            │   │
+│  │  - Auto-retrain models                │   │
+│  │  - Auto-generate predictions          │   │
+│  └──────────────────────────────────────┘   │
 └──────────────────────────────────────────────┘
          │
          │ External APIs
@@ -173,6 +181,7 @@
 | **Async**               | asyncio, WebSocket | Built-in |
 | **Validation**          | Pydantic           | 2.x      |
 | **Server**              | Uvicorn            | 0.24.0   |
+| **AI/LLM**              | Google Gemini      | 0.3.0+   |
 
 ---
 
@@ -269,9 +278,10 @@ GEMINI_API_KEY=your_gemini_api_key
 
 # Cache Settings
 CACHE_DURATION=300
-API_COOLDOWN=2
+API_COOLDOWN=5
 REALTIME_CACHE_DURATION=60
 RATE_LIMIT_INITIAL_BACKOFF=60
+RATE_LIMIT_MAX_BACKOFF=1800
 
 # Background Tasks
 AUTO_UPDATE_ENABLED=true
@@ -279,6 +289,16 @@ AUTO_UPDATE_INTERVAL=3600
 AUTO_UPDATE_STARTUP_DELAY=60
 AUTO_UPDATE_MAX_RETRIES=3
 AUTO_UPDATE_RETRY_DELAY=300
+
+# Auto-Retrain Settings
+AUTO_RETRAIN_ENABLED=true
+AUTO_RETRAIN_INTERVAL=86400
+AUTO_RETRAIN_HOUR=2
+AUTO_RETRAIN_MIN_PREDICTIONS=10
+
+# Auto-Predict Settings
+AUTO_PREDICT_ENABLED=true
+AUTO_PREDICT_HOUR=8
 
 # CORS (Development)
 CORS_ORIGINS=http://localhost:4000,http://127.0.0.1:4000
@@ -323,14 +343,21 @@ python run_backend.py
 | `ALPHA_VANTAGE_KEY`          | Alpha Vantage API key                       | -                | No       |
 | `GEMINI_API_KEY`             | Google Gemini API key for AI explanations   | -                | No       |
 | `CACHE_DURATION`             | Market data cache TTL (seconds)             | `300`            | No       |
-| `API_COOLDOWN`               | API request cooldown (seconds)              | `2`              | No       |
+| `API_COOLDOWN`               | API request cooldown (seconds)              | `5`              | No       |
 | `REALTIME_CACHE_DURATION`    | Real-time data cache TTL (seconds)          | `60`             | No       |
 | `RATE_LIMIT_INITIAL_BACKOFF` | Initial rate limit backoff (seconds)        | `60`             | No       |
+| `RATE_LIMIT_MAX_BACKOFF`     | Maximum rate limit backoff (seconds)        | `1800`           | No       |
 | `AUTO_UPDATE_ENABLED`        | Enable automatic prediction updates         | `true`           | No       |
 | `AUTO_UPDATE_INTERVAL`       | Update interval in seconds                  | `3600`           | No       |
-| `AUTO_UPDATE_STARTUP_DELAY`  | Startup delay before first update (seconds) | `60`             | No       |
+| `AUTO_UPDATE_STARTUP_DELAY`   | Startup delay before first update (seconds) | `60`             | No       |
 | `AUTO_UPDATE_MAX_RETRIES`    | Maximum retry attempts                      | `3`              | No       |
 | `AUTO_UPDATE_RETRY_DELAY`    | Delay between retries (seconds)             | `300`            | No       |
+| `AUTO_RETRAIN_ENABLED`       | Enable automatic model retraining           | `true`           | No       |
+| `AUTO_RETRAIN_INTERVAL`      | Retrain interval in seconds                 | `86400`          | No       |
+| `AUTO_RETRAIN_HOUR`          | Hour of day to retrain (0-23)                | `2`              | No       |
+| `AUTO_RETRAIN_MIN_PREDICTIONS` | Minimum predictions before retrain         | `10`             | No       |
+| `AUTO_PREDICT_ENABLED`       | Enable automatic prediction generation      | `true`           | No       |
+| `AUTO_PREDICT_HOUR`          | Hour of day to generate prediction (0-23)    | `8`              | No       |
 | `CORS_ORIGINS`               | Comma-separated list of allowed origins     | `*` (dev)        | No       |
 | `PORT`                       | Server port                                 | `8001`           | No       |
 
@@ -418,6 +445,7 @@ https://kgf-gold-price-predictor.onrender.com
 | `/api/v1/xauusd/prediction-history`     | GET    | Historical predictions                | `?days=30`               |
 | `/api/v1/xauusd/pending-predictions`    | GET    | Pending predictions list              | -                        |
 | `/api/v1/xauusd/accuracy-visualization` | GET    | Accuracy statistics for visualization | -                        |
+| `/api/v1/xauusd/model-info`             | GET    | Detailed ML model information         | -                        |
 
 #### Data Management
 
@@ -430,7 +458,7 @@ https://kgf-gold-price-predictor.onrender.com
 
 | Endpoint                                         | Method | Description       | Path Params                    |
 | ------------------------------------------------ | ------ | ----------------- | ------------------------------ |
-| `/api/v1/exchange/{from_currency}/{to_currency}` | GET    | Get exchange rate | `from_currency`, `to_currency` |
+| `/api/v1/exchange-rate/{from_currency}/{to_currency}` | GET    | Get exchange rate | `from_currency`, `to_currency` |
 
 #### WebSocket
 
@@ -518,6 +546,18 @@ curl http://localhost:8001/api/v1/xauusd/enhanced-prediction
     "change": -49.24,
     "change_percentage": -1.18,
     "method": "Lasso Regression"
+  },
+  "model": {
+    "name": "Enhanced Lasso Regression",
+    "type": "Lasso Regression",
+    "r2_score": 0.9616,
+    "training_r2_score": 0.9616,
+    "live_r2_score": 0.9616,
+    "features": {
+      "total": 35,
+      "selected": 25,
+      "top_features": ["close", "volume", "sma_20"]
+    }
   },
   "sentiment": {
     "combined_sentiment": 0.15,
@@ -659,6 +699,7 @@ asyncio.run(listen_to_prices())
 - Automated retraining with new market data
 - Cross-validation for model selection
 - Feature selection for optimal performance
+- Daily retraining at configurable time (default: 2 AM)
 
 ### Enhanced Model: News-Enhanced Lasso
 
@@ -684,6 +725,15 @@ asyncio.run(listen_to_prices())
 - Domain-specific keyword extraction
 - Temporal sentiment aggregation
 
+### Model Retraining
+
+The system automatically retrains models daily:
+
+- **Schedule**: Configurable hour (default: 2 AM)
+- **Trigger**: Minimum number of new predictions (default: 10)
+- **Data**: Uses historical predictions and actual prices
+- **Validation**: Cross-validation ensures model quality
+
 ---
 
 ## 🏗️ Project Structure
@@ -696,6 +746,7 @@ kgf-gold-price-predictor-ml-backend/
 │   │   ├── main.py                 # FastAPI application entry point
 │   │   ├── api/
 │   │   │   └── v1/
+│   │   │       ├── __init__.py     # API router configuration
 │   │   │       └── routes/
 │   │   │           ├── health.py   # Health check endpoints
 │   │   │           ├── xauusd.py   # Gold price endpoints
@@ -708,6 +759,7 @@ kgf-gold-price-predictor-ml-backend/
 │   │   │   ├── exceptions.py       # Custom exceptions
 │   │   │   ├── middleware.py       # Custom middleware
 │   │   │   ├── metrics.py          # Performance metrics
+│   │   │   ├── models.py           # ML model initialization
 │   │   │   ├── background_tasks.py # Background task definitions
 │   │   │   ├── task_manager.py     # Background task management
 │   │   │   └── websocket.py        # WebSocket connection manager
@@ -723,27 +775,32 @@ kgf-gold-price-predictor-ml-backend/
 │   │   │   └── exchange.py         # Exchange rate schemas
 │   │   └── utils/
 │   │       ├── cache.py            # Caching utilities
-│   │       └── yfinance_helper.py # Market data fetching
+│   │       ├── yfinance_helper.py  # Market data fetching
+│   │       └── fallback_data.py    # Fallback data handling
+│   ├── ai/
+│   │   ├── config.py               # AI service configuration
+│   │   ├── exceptions.py           # AI-specific exceptions
+│   │   └── services/
+│   │       ├── gemini_service.py   # Google Gemini integration
+│   │       └── prediction_reason_service.py # AI explanation service
 │   ├── config/
-│   │   ├── news_config.py          # News API configuration
-│   │   └── __init__.py
+│   │   └── news_config.py          # News API configuration
 │   ├── models/
 │   │   ├── lasso_model.py          # Lasso regression model
 │   │   ├── news_prediction.py      # News-enhanced model
-│   │   └── lasso_gold_model.pkl    # Trained model file
+│   │   ├── lasso_gold_model.pkl    # Trained model file
+│   │   └── enhanced_lasso_gold_model.pkl # Enhanced model file
 │   └── data/                       # Database files (SQLite)
 │       ├── gold_predictions.db
 │       └── gold_predictions_backup.db
-├── .github/
-│   └── workflows/
-│       └── deploy.yml              # CI/CD pipeline
+├── kgf-gold-tradex-frontend/      # Frontend application (separate repo)
 ├── .env                            # Environment variables (not in git)
 ├── .env.example                    # Environment variables template
 ├── .gitignore                      # Git ignore rules
 ├── requirements.txt                # Python dependencies
 ├── run_backend.py                  # Application startup script
-├── import_predictions.py           # Data import utility
 ├── train_enhanced_model.py         # Model training script
+├── RETRAIN_MODEL.sh                # Model retraining script
 ├── Procfile                        # Process configuration (Render)
 ├── render.yaml                     # Render deployment config
 ├── runtime.txt                     # Python version specification
@@ -798,21 +855,34 @@ New + → Blueprint → Connect Repository → Apply
 
 ### Docker Deployment
 
+Create a `Dockerfile`:
+
 ```dockerfile
-# Dockerfile (example)
 FROM python:3.11-slim
 
 WORKDIR /app
 
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy application code
 COPY . .
 
+# Expose port
 EXPOSE 8001
 
+# Run application
 CMD ["python", "run_backend.py"]
 ```
+
+Build and run:
 
 ```bash
 # Build image
@@ -835,8 +905,11 @@ POSTGRESQL_PASSWORD=your_secure_password
 POSTGRESQL_PORT=5432
 NEWS_API_KEY=your_news_api_key
 ALPHA_VANTAGE_KEY=your_alpha_vantage_key
+GEMINI_API_KEY=your_gemini_api_key
 CORS_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
 PORT=10000
+CACHE_DURATION=3600
+API_COOLDOWN=15
 ```
 
 ### Free Tier Limitations
@@ -1209,6 +1282,8 @@ python -c "import sys; print(sys.path)"
   - PostgreSQL/SQLite support
   - Background task processing
   - Rate limit handling
+  - Auto-retraining
+  - Auto-prediction generation
 
 ---
 
