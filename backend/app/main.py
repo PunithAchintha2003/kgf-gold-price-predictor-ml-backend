@@ -26,7 +26,8 @@ from .core.background_tasks import (
     broadcast_daily_data,
     auto_update_pending_predictions,
     auto_retrain_model,
-    auto_generate_daily_prediction
+    auto_generate_daily_prediction,
+    auto_retrain_and_predict
 )
 from .core.task_manager import BackgroundTaskManager
 from .core.websocket import ConnectionManager
@@ -177,32 +178,46 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         else:
             logger.debug("  ⊘ Auto-update task disabled")
 
-        # Auto-predict task
-        if settings.auto_predict_enabled:
-            predict_task = asyncio.create_task(
-                auto_generate_daily_prediction(
+        # Combined retrain-and-predict task (runs at same time, sequentially)
+        if settings.auto_retrain_enabled and settings.auto_predict_enabled:
+            combined_task = asyncio.create_task(
+                auto_retrain_and_predict(
                     market_data_service, prediction_service, prediction_repo, task_manager
                 )
             )
             task_manager.register_task(
-                "auto_generate_daily_prediction", predict_task)
+                "auto_retrain_and_predict", combined_task)
             logger.debug(
-                f"  ✓ Auto-predict task started (hour: {settings.auto_predict_hour}:00)")
+                f"  ✓ Combined retrain-and-predict task started (hour: {settings.auto_predict_hour}:00, "
+                f"retrain first, then predict with Gemini reasons)")
         else:
-            logger.debug("  ⊘ Auto-predict task disabled")
-
-        # Auto-retrain task
-        if settings.auto_retrain_enabled:
-            retrain_task = asyncio.create_task(
-                auto_retrain_model(
-                    prediction_service, prediction_repo, task_manager
+            # Fallback to separate tasks if one is disabled
+            # Auto-predict task
+            if settings.auto_predict_enabled:
+                predict_task = asyncio.create_task(
+                    auto_generate_daily_prediction(
+                        market_data_service, prediction_service, prediction_repo, task_manager
+                    )
                 )
-            )
-            task_manager.register_task("auto_retrain_model", retrain_task)
-            logger.debug(
-                f"  ✓ Auto-retrain task started (hour: {settings.auto_retrain_hour}:00)")
-        else:
-            logger.debug("  ⊘ Auto-retrain task disabled")
+                task_manager.register_task(
+                    "auto_generate_daily_prediction", predict_task)
+                logger.debug(
+                    f"  ✓ Auto-predict task started (hour: {settings.auto_predict_hour}:00)")
+            else:
+                logger.debug("  ⊘ Auto-predict task disabled")
+
+            # Auto-retrain task
+            if settings.auto_retrain_enabled:
+                retrain_task = asyncio.create_task(
+                    auto_retrain_model(
+                        prediction_service, prediction_repo, task_manager
+                    )
+                )
+                task_manager.register_task("auto_retrain_model", retrain_task)
+                logger.debug(
+                    f"  ✓ Auto-retrain task started (hour: {settings.auto_retrain_hour}:00)")
+            else:
+                logger.debug("  ⊘ Auto-retrain task disabled")
 
         # Set task manager for health check endpoint
         set_task_manager(task_manager)
