@@ -922,7 +922,7 @@ class NewsEnhancedLassoPredictor:
         # Always create a new news_analyzer instance (don't load from pickle)
         self.news_analyzer = NewsSentimentAnalyzer()
 
-        logger.info(f"Enhanced Lasso model loaded from {filepath}")
+        logger.info("✨ Enhanced Lasso model ready")
 
 
 def main():

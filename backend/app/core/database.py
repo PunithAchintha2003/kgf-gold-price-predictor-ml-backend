@@ -63,7 +63,7 @@ def init_postgresql_pool() -> bool:
             **connection_params
         )
         if _postgresql_pool:
-            logger.info(
+            logger.debug(
                 f"PostgreSQL connection pool initialized: {settings.postgresql_database}")
             return True
     except Exception as e:
@@ -483,7 +483,7 @@ def init_database():
             conn.rollback()
 
         conn.commit()
-        logger.info(f"Database initialized successfully: {db_type.upper()}")
+        logger.debug(f"Database initialized successfully: {db_type.upper()}")
 
 
 def init_backup_database():
@@ -513,7 +513,7 @@ def init_backup_database():
             ''')
 
         conn.commit()
-        logger.info("Backup database initialized")
+        logger.debug("Backup database initialized")
 
 
 # Export init_postgresql_pool for use in main.py

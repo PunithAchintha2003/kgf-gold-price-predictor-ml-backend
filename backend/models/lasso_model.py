@@ -478,7 +478,7 @@ class LassoGoldPredictor:
         self.alpha = model_data.get('alpha', 0.01)
         self.max_iter = model_data.get('max_iter', 2000)
 
-        logger.info(f"Lasso Regression model loaded from {filepath}")
+        logger.info("✨ Lasso Regression model ready")
 
 
 def main():

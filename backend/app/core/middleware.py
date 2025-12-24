@@ -154,20 +154,11 @@ class TimingMiddleware(BaseHTTPMiddleware):
         # Log requests with user-friendly formatting (only log, no slow request warnings)
         from .logging_config import Emojis, log_request
         
-        # Log request with status and duration (at debug level to reduce noise)
-        if process_time > 5.0:  # Only log very slow requests (>5s) at info level
-            log_request(
-                logger,
-                request.method,
-                request.url.path,
-                response.status_code,
-                process_time
-            )
-        else:
-            # Log at debug level for normal requests
-            logger.debug(
-                f"{Emojis.REQUEST} {request.method} {request.url.path} → {response.status_code} ({process_time:.3f}s)"
-            )
+        # Log requests at debug level only (reduce noise)
+        # Suppress all request logging to reduce verbosity
+        logger.debug(
+            f"{Emojis.REQUEST} {request.method} {request.url.path} → {response.status_code} ({process_time:.3f}s)"
+        )
         
         return response
 

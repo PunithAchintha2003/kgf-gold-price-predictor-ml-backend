@@ -78,7 +78,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     # Startup
     try:
-        logger.info(f"🚀 Server starting in {settings.environment} mode")
+        logger.debug(f"🚀 Server starting in {settings.environment} mode")
 
         # Store settings in app state for access in exception handlers
         app.state.settings = settings
@@ -142,7 +142,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Log essential system information only
         from .core.logging_config import Emojis
-        logger.info(
+        logger.debug(
             f"{Emojis.CONFIG} Environment: {settings.environment} | Database: {'PostgreSQL' if settings.use_postgresql else 'SQLite'}")
 
         # Initialize WebSocket connection manager
@@ -154,7 +154,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.task_manager = task_manager
 
         # Start background tasks
-        logger.info("Starting background tasks...")
+        logger.debug("Starting background tasks...")
 
         # Broadcast task
         broadcast_task = asyncio.create_task(
@@ -172,10 +172,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
             task_manager.register_task(
                 "auto_update_pending_predictions", update_task)
-            logger.info(
+            logger.debug(
                 f"  ✓ Auto-update task started (interval: {settings.auto_update_interval}s)")
         else:
-            logger.info("  ⊘ Auto-update task disabled")
+            logger.debug("  ⊘ Auto-update task disabled")
 
         # Auto-predict task
         if settings.auto_predict_enabled:
@@ -186,10 +186,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
             task_manager.register_task(
                 "auto_generate_daily_prediction", predict_task)
-            logger.info(
+            logger.debug(
                 f"  ✓ Auto-predict task started (hour: {settings.auto_predict_hour}:00)")
         else:
-            logger.info("  ⊘ Auto-predict task disabled")
+            logger.debug("  ⊘ Auto-predict task disabled")
 
         # Auto-retrain task
         if settings.auto_retrain_enabled:
@@ -199,17 +199,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 )
             )
             task_manager.register_task("auto_retrain_model", retrain_task)
-            logger.info(
+            logger.debug(
                 f"  ✓ Auto-retrain task started (hour: {settings.auto_retrain_hour}:00)")
         else:
-            logger.info("  ⊘ Auto-retrain task disabled")
+            logger.debug("  ⊘ Auto-retrain task disabled")
 
         # Set task manager for health check endpoint
         set_task_manager(task_manager)
 
         logger.info("✅ Application startup complete")
-        logger.info(f"🌐 API available at http://localhost:8001")
-        logger.info(f"📚 API documentation at http://localhost:8001/docs")
 
     except Exception as e:
         logger.error(f"❌ Failed to start application: {e}", exc_info=True)

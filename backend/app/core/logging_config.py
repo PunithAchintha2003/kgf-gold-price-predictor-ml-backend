@@ -163,6 +163,9 @@ class FuturisticFormatter(logging.Formatter):
             return Emojis.API
         elif 'cache' in msg_lower or 'cached' in msg_lower:
             return Emojis.CACHE
+        # Check for ✨ emoji first (used for model loading)
+        if '✨' in message:
+            return '✨'
         elif 'model' in msg_lower or 'ml' in msg_lower or 'prediction' in msg_lower:
             return Emojis.MODEL
         elif 'prediction' in msg_lower or 'predict' in msg_lower:
@@ -305,17 +308,26 @@ def setup_logging():
     console_handler.addFilter(CancelledErrorFilter())
     root_logger.addHandler(console_handler)
 
-    # Configure third-party loggers
+    # Configure third-party loggers - suppress verbose logs
     uvicorn_access_logger = logging.getLogger("uvicorn.access")
-    uvicorn_access_logger.setLevel(logging.WARNING)
+    uvicorn_access_logger.setLevel(logging.ERROR)
     uvicorn_access_logger.addFilter(CancelledErrorFilter())
     
     uvicorn_logger = logging.getLogger("uvicorn")
-    uvicorn_logger.setLevel(logging.WARNING)
+    uvicorn_logger.setLevel(logging.ERROR)
     uvicorn_logger.addFilter(CancelledErrorFilter())
     
     starlette_logger = logging.getLogger("starlette")
+    starlette_logger.setLevel(logging.WARNING)
     starlette_logger.addFilter(CancelledErrorFilter())
+    
+    # Suppress watchfiles (file change detection)
+    watchfiles_logger = logging.getLogger("watchfiles")
+    watchfiles_logger.setLevel(logging.ERROR)
+    
+    # Allow INFO logs from models but keep them clean
+    models_logger = logging.getLogger("models")
+    models_logger.setLevel(logging.INFO)
     
     # Suppress noisy third-party libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -359,17 +371,11 @@ def log_performance(logger: logging.Logger, operation: str, duration: float, thr
 
 
 def log_request(logger: logging.Logger, method: str, path: str, status: int, duration: float):
-    """Log HTTP requests in a user-friendly way (only for very slow requests)"""
-    status_emoji = Emojis.SUCCESS if 200 <= status < 300 else Emojis.WARNING if 300 <= status < 400 else Emojis.ERROR
-    # Only log at INFO level if request is very slow (>5s), otherwise debug
-    if duration > 5.0:
-        logger.info(
-            f"{status_emoji} {method} {path} → {status} ({duration:.3f}s)"
-        )
-    else:
-        logger.debug(
-            f"{status_emoji} {method} {path} → {status} ({duration:.3f}s)"
-        )
+    """Log HTTP requests in a user-friendly way (suppressed for cleaner output)"""
+    # Suppress all request logging - only log at debug level
+    logger.debug(
+        f"{Emojis.SUCCESS if 200 <= status < 300 else Emojis.WARNING if 300 <= status < 400 else Emojis.ERROR} {method} {path} → {status} ({duration:.3f}s)"
+    )
 
 
 def log_database_operation(logger: logging.Logger, operation: str, success: bool = True):
