@@ -13,6 +13,35 @@ from datetime import datetime
 from .config import settings
 
 
+class CancelledErrorFilter(logging.Filter):
+    """
+    Filter to suppress CancelledError exceptions during shutdown.
+    These are expected when the server is interrupted (Ctrl+C) and shouldn't be logged as errors.
+    """
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Suppress CancelledError from Starlette/uvicorn during shutdown
+        if record.exc_info:
+            exc_type = record.exc_info[0]
+            if exc_type and exc_type.__name__ == 'CancelledError':
+                # Check if it's from Starlette/uvicorn lifespan handling (expected during shutdown)
+                pathname_lower = str(record.pathname).lower()
+                message_lower = str(record.getMessage()).lower()
+                if ('starlette' in pathname_lower or 
+                    'uvicorn' in pathname_lower or
+                    'lifespan' in pathname_lower or
+                    'lifespan' in message_lower or
+                    'receive_queue' in message_lower):
+                    return False  # Suppress this log record
+        
+        # Also check message content for CancelledError patterns
+        message_lower = str(record.getMessage()).lower()
+        if ('cancellederror' in message_lower and 
+            ('lifespan' in message_lower or 'receive' in message_lower)):
+            return False  # Suppress this log record
+            
+        return True  # Allow all other log records
+
+
 class StructuredFormatter(logging.Formatter):
     """Industry-standard structured log formatter"""
     
@@ -87,14 +116,24 @@ def setup_logging():
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
+    # Add filter to suppress expected CancelledError during shutdown
+    console_handler.addFilter(CancelledErrorFilter())
     root_logger.addHandler(console_handler)
 
     # Configure third-party loggers
     # Suppress verbose uvicorn access logs (HTTP requests) - only show errors
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
+    uvicorn_access_logger.setLevel(logging.WARNING)
+    uvicorn_access_logger.addFilter(CancelledErrorFilter())
     
     # Suppress uvicorn startup/shutdown messages (we'll show our own)
-    logging.getLogger("uvicorn").setLevel(logging.WARNING)
+    uvicorn_logger = logging.getLogger("uvicorn")
+    uvicorn_logger.setLevel(logging.WARNING)
+    uvicorn_logger.addFilter(CancelledErrorFilter())
+    
+    # Suppress Starlette lifespan CancelledError during shutdown
+    starlette_logger = logging.getLogger("starlette")
+    starlette_logger.addFilter(CancelledErrorFilter())
     
     # Suppress noisy third-party libraries
     logging.getLogger("httpx").setLevel(logging.WARNING)

@@ -358,10 +358,28 @@ def init_database():
                     actual_price DECIMAL(10, 2),
                     accuracy_percentage DECIMAL(5, 2),
                     prediction_method VARCHAR(100),
+                    prediction_reasons TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            
+            # Add prediction_reasons column if it doesn't exist (for existing databases)
+            try:
+                cursor.execute('''
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.columns 
+                            WHERE table_name = 'predictions' AND column_name = 'prediction_reasons'
+                        ) THEN
+                            ALTER TABLE predictions ADD COLUMN prediction_reasons TEXT;
+                        END IF;
+                    END $$;
+                ''')
+                logger.debug("prediction_reasons column verified/created for PostgreSQL")
+            except Exception as e:
+                logger.debug(f"Could not add prediction_reasons column (may already exist): {e}")
 
             # Clean up duplicate records before adding unique constraint
             try:
@@ -415,10 +433,21 @@ def init_database():
                     actual_price REAL,
                     accuracy_percentage REAL,
                     prediction_method TEXT,
+                    prediction_reasons TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            
+            # Add prediction_reasons column if it doesn't exist (for existing databases)
+            try:
+                cursor.execute("PRAGMA table_info(predictions)")
+                columns = [row[1] for row in cursor.fetchall()]
+                if 'prediction_reasons' not in columns:
+                    cursor.execute('ALTER TABLE predictions ADD COLUMN prediction_reasons TEXT')
+                    logger.debug("Added prediction_reasons column to SQLite database")
+            except Exception as e:
+                logger.debug(f"Could not add prediction_reasons column (may already exist): {e}")
 
         # Create indexes for better query performance
         try:

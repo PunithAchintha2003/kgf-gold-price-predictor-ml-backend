@@ -26,3 +26,6 @@ psycopg2-binary>=2.9.9
 # Build dependencies to ensure proper compilation
 setuptools>=65.0.0
 wheel>=0.40.0
+
+# Google Generative AI (Gemini)
+google-generativeai>=0.3.0

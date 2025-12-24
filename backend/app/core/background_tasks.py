@@ -334,6 +334,7 @@ async def auto_generate_daily_prediction(
         f"📊 Auto-prediction task started - will generate predictions daily at {settings.auto_predict_hour}:00 (skips weekends)")
     
     max_consecutive_failures = 3
+    consecutive_failures = 0
     last_prediction_date = None
     
     while not task_manager.shutdown_event.is_set():
@@ -399,11 +400,24 @@ async def auto_generate_daily_prediction(
                         continue
                     
                     # Generate prediction (this will fetch news sentiment)
+                    logger.debug(f"Calling prediction_service.predict_next_day() for {next_day}...")
                     predicted_price = prediction_service.predict_next_day()
                     
                     if predicted_price is None:
-                        logger.error("❌ Failed to generate prediction - service returned None")
+                        # Check which models are available for better diagnostics
+                        has_enhanced = prediction_service.news_enhanced_predictor is not None and prediction_service.news_enhanced_predictor.model is not None
+                        has_lasso = prediction_service.lasso_predictor is not None and prediction_service.lasso_predictor.model is not None
+                        
+                        logger.error(
+                            f"❌ Failed to generate prediction for {next_day} - service returned None. "
+                            f"Enhanced model: {'available' if has_enhanced else 'unavailable'}, "
+                            f"Lasso model: {'available' if has_lasso else 'unavailable'}. "
+                            f"Check prediction service logs for details."
+                        )
                         consecutive_failures += 1
+                        state["error_count"] = state.get("error_count", 0) + 1
+                        state["last_error"] = f"Prediction service returned None (Enhanced: {has_enhanced}, Lasso: {has_lasso})"
+                        
                         if consecutive_failures >= max_consecutive_failures:
                             logger.error(f"❌ Too many consecutive failures ({consecutive_failures}), waiting before retry")
                             await asyncio.sleep(3600)  # Wait 1 hour
@@ -413,13 +427,84 @@ async def auto_generate_daily_prediction(
                     # Get prediction method
                     prediction_method = prediction_service.get_model_display_name()
                     
-                    # Save prediction to database
+                    # Generate prediction reasons using AI (only when new prediction is created)
+                    prediction_reasons = None
+                    try:
+                        from ai.services.prediction_reason_service import PredictionReasonService
+                        from ai.services.gemini_service import GeminiService
+                        from ai.config import ai_config
+                        
+                        if ai_config.is_configured():
+                            logger.info(f"🤖 Generating AI prediction reasons for {next_day}...")
+                            
+                            # Get current price
+                            current_price_data = market_data_service.get_realtime_price()
+                            current_price = current_price_data.get('current_price', 0.0)
+                            
+                            if current_price > 0:
+                                # Get last 10 days of predictions
+                                historical_predictions = prediction_repo.get_historical_predictions(days=10)
+                                formatted_predictions = []
+                                for pred in historical_predictions:
+                                    formatted_predictions.append({
+                                        "date": pred['date'],
+                                        "predicted_price": pred['predicted_price'],
+                                        "actual_price": pred.get('actual_price'),
+                                        "accuracy_percentage": pred.get('accuracy_percentage'),
+                                        "method": pred.get('method', 'Lasso Regression')
+                                    })
+                                
+                                # Get aggregated news sentiment (excluding Alpha Vantage data)
+                                news_info = None
+                                try:
+                                    from models.news_prediction import NewsSentimentAnalyzer
+                                    news_analyzer = NewsSentimentAnalyzer()
+                                    # Get aggregated sentiment metrics and top headlines (last 7 days)
+                                    news_info = news_analyzer.get_aggregated_sentiment_for_gemini(days_back=7)
+                                    
+                                    if news_info.get('news_volume', 0) > 0:
+                                        logger.debug(f"📰 Fetched news sentiment: {news_info.get('news_volume')} articles, sentiment: {news_info.get('combined_sentiment', 0):.2f}")
+                                    else:
+                                        logger.debug("📰 No news data available for Gemini")
+                                        news_info = None
+                                except Exception as news_error:
+                                    logger.warning(f"⚠️ Error fetching news for Gemini: {news_error}")
+                                    news_info = None  # Continue without news
+                                
+                                # Generate reasons using AI
+                                gemini_service = GeminiService()
+                                reason_service = PredictionReasonService(gemini_service)
+                                
+                                prediction_reasons = reason_service.generate_prediction_reasons(
+                                    current_price=current_price,
+                                    predicted_price=predicted_price,
+                                    prediction_date=next_day,
+                                    prediction_method=prediction_method,
+                                    historical_predictions=formatted_predictions,
+                                    news_info=news_info  # Aggregated sentiment metrics (excluding Alpha Vantage)
+                                )
+                                
+                                if prediction_reasons:
+                                    logger.info(f"✅ Generated prediction reasons for {next_day}")
+                                else:
+                                    logger.warning(f"⚠️ Failed to generate prediction reasons for {next_day}")
+                        else:
+                            logger.debug("Gemini API not configured, skipping prediction reasons generation")
+                    except Exception as reason_error:
+                        logger.warning(f"⚠️ Error generating prediction reasons: {reason_error}")
+                        # Continue without reasons - prediction is still saved
+                    
+                    # Save prediction to database with reasons
                     prediction_repo.save_prediction(
-                        next_day, predicted_price, prediction_method=prediction_method
+                        next_day, 
+                        predicted_price, 
+                        prediction_method=prediction_method,
+                        prediction_reasons=prediction_reasons
                     )
                     
                     logger.info(
-                        f"✅ Generated and saved prediction for {next_day}: ${predicted_price:.2f} (Method: {prediction_method})")
+                        f"✅ Generated and saved prediction for {next_day}: ${predicted_price:.2f} (Method: {prediction_method})"
+                        f"{' with AI reasons' if prediction_reasons else ''}")
                     
                     last_prediction_date = current_date
                     state["last_prediction_date"] = next_day

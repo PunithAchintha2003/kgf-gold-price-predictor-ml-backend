@@ -265,6 +265,7 @@ POSTGRESQL_PASSWORD=your_password
 # API Keys (Optional)
 NEWS_API_KEY=your_news_api_key
 ALPHA_VANTAGE_KEY=your_alpha_vantage_key
+GEMINI_API_KEY=your_gemini_api_key
 
 # Cache Settings
 CACHE_DURATION=300
@@ -320,6 +321,7 @@ python run_backend.py
 | `POSTGRESQL_PASSWORD`        | Database password                           | -                | Yes\*    |
 | `NEWS_API_KEY`               | NewsAPI key for sentiment analysis          | -                | No       |
 | `ALPHA_VANTAGE_KEY`          | Alpha Vantage API key                       | -                | No       |
+| `GEMINI_API_KEY`             | Google Gemini API key for AI explanations   | -                | No       |
 | `CACHE_DURATION`             | Market data cache TTL (seconds)             | `300`            | No       |
 | `API_COOLDOWN`               | API request cooldown (seconds)              | `2`              | No       |
 | `REALTIME_CACHE_DURATION`    | Real-time data cache TTL (seconds)          | `60`             | No       |
