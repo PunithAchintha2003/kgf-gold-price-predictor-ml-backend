@@ -54,9 +54,9 @@ def initialize_models():
 
     # Summary - only log if there's an issue
     if news_enhanced_predictor and news_enhanced_predictor.model is not None:
-        logger.info("🤖 ML Model: News-Enhanced Lasso Regression (PRIMARY)")
+        logger.debug("🤖 ML Model: News-Enhanced Lasso Regression (PRIMARY)")
     elif lasso_predictor and lasso_predictor.model is not None:
-        logger.info("🤖 ML Model: Basic Lasso Regression (FALLBACK)")
+        logger.debug("🤖 ML Model: Basic Lasso Regression (FALLBACK)")
     else:
         logger.error("❌ No ML models available!")
 

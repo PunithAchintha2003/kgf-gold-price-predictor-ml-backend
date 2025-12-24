@@ -59,7 +59,7 @@ async def init_postgresql_pool_async() -> bool:
         _postgresql_pool = await asyncpg.create_pool(**connection_params)
         
         if _postgresql_pool:
-            logger.info(f"Async PostgreSQL connection pool initialized: {settings.postgresql_database}")
+            logger.debug(f"Async PostgreSQL connection pool initialized: {settings.postgresql_database}")
             return True
     except Exception as e:
         logger.error(f"Failed to initialize async PostgreSQL pool: {e}")
@@ -74,7 +74,7 @@ async def close_postgresql_pool_async():
     if _postgresql_pool:
         await _postgresql_pool.close()
         _postgresql_pool = None
-        logger.info("Async PostgreSQL connection pool closed")
+        logger.debug("Async PostgreSQL connection pool closed")
 
 
 def get_db_type_async() -> str:
@@ -255,7 +255,7 @@ async def init_database_async():
             await conn.commit()
         
         # PostgreSQL auto-commits DDL operations, no need for explicit commit
-        logger.info(f"Async database initialized successfully: {db_type.upper()}")
+        logger.debug(f"Async database initialized successfully: {db_type.upper()}")
 
 
 __all__ = [

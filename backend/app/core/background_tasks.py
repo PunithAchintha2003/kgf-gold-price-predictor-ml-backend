@@ -304,7 +304,7 @@ async def auto_generate_daily_prediction(
 ):
     """
     Background task to automatically generate daily predictions when market opens.
-    
+
     Features:
     - Runs daily at market open time (default: 8 AM)
     - Skips weekends (Saturday and Sunday)
@@ -314,12 +314,13 @@ async def auto_generate_daily_prediction(
     - Only generates once per day
     """
     task_name = "auto_generate_daily_prediction"
-    
+
     # Check if auto-predict is enabled
     if not settings.auto_predict_enabled:
-        logger.info("📊 Auto-prediction generation is disabled via configuration")
+        logger.info(
+            "📊 Auto-prediction generation is disabled via configuration")
         return
-    
+
     # Wait for startup delay
     try:
         await asyncio.wait_for(
@@ -329,14 +330,14 @@ async def auto_generate_daily_prediction(
         return  # Shutdown requested during startup delay
     except asyncio.TimeoutError:
         pass  # Continue after delay
-    
+
     logger.info(
         f"📊 Auto-prediction task started - will generate predictions daily at {settings.auto_predict_hour}:00 (skips weekends)")
-    
+
     max_consecutive_failures = 3
     consecutive_failures = 0
     last_prediction_date = None
-    
+
     while not task_manager.shutdown_event.is_set():
         try:
             # Initialize/update task state
@@ -353,11 +354,11 @@ async def auto_generate_daily_prediction(
             state = task_manager.task_states[task_name]
             state["status"] = "running"
             state["last_run"] = datetime.now().isoformat()
-            
+
             current_time = datetime.now()
             current_hour = current_time.hour
             current_date = current_time.date()
-            
+
             # Check if it's a weekend (skip Saturday and Sunday)
             if current_time.weekday() >= 5:  # Saturday = 5, Sunday = 6
                 # Calculate days until Monday
@@ -366,48 +367,54 @@ async def auto_generate_daily_prediction(
                 else:  # Sunday
                     days_until_monday = 1  # Wait 1 day until Monday
                 wait_seconds = days_until_monday * 86400  # Convert days to seconds
-                logger.debug(f"⏸️ Weekend detected (day {current_time.weekday()}). Waiting {days_until_monday} day(s) until next Monday...")
+                logger.debug(
+                    f"⏸️ Weekend detected (day {current_time.weekday()}). Waiting {days_until_monday} day(s) until next Monday...")
                 try:
                     await asyncio.wait_for(
                         task_manager.shutdown_event.wait(),
-                        timeout=min(wait_seconds, 86400.0)  # Max 24 hours per wait
+                        # Max 24 hours per wait
+                        timeout=min(wait_seconds, 86400.0)
                     )
                     break  # Shutdown requested
                 except asyncio.TimeoutError:
                     continue  # Continue loop after wait
-            
+
             # Check if it's time to generate prediction (at the configured hour, once per day)
             should_generate = (
                 current_hour == settings.auto_predict_hour and
                 last_prediction_date != current_date
             )
-            
+
             if should_generate:
-                logger.info(f"📊 Generating daily prediction for next trading day...")
+                logger.info(
+                    f"📊 Generating daily prediction for next trading day...")
                 try:
                     # Get next trading day (skip weekends)
                     from ..services.market_data_service import get_next_trading_day
                     next_trading_day_dt = get_next_trading_day()
                     next_day = next_trading_day_dt.strftime("%Y-%m-%d")
-                    
+
                     # Check if prediction already exists for this date
                     if prediction_repo.prediction_exists_for_date(next_day):
-                        logger.info(f"✅ Prediction already exists for {next_day}, skipping generation")
+                        logger.info(
+                            f"✅ Prediction already exists for {next_day}, skipping generation")
                         last_prediction_date = current_date
                         state["last_prediction_date"] = next_day
                         # Wait until next day
-                        await asyncio.sleep(3600)  # Wait 1 hour before checking again
+                        # Wait 1 hour before checking again
+                        await asyncio.sleep(3600)
                         continue
-                    
+
                     # Generate prediction (this will fetch news sentiment)
-                    logger.debug(f"Calling prediction_service.predict_next_day() for {next_day}...")
+                    logger.debug(
+                        f"Calling prediction_service.predict_next_day() for {next_day}...")
                     predicted_price = prediction_service.predict_next_day()
-                    
+
                     if predicted_price is None:
                         # Check which models are available for better diagnostics
                         has_enhanced = prediction_service.news_enhanced_predictor is not None and prediction_service.news_enhanced_predictor.model is not None
                         has_lasso = prediction_service.lasso_predictor is not None and prediction_service.lasso_predictor.model is not None
-                        
+
                         logger.error(
                             f"❌ Failed to generate prediction for {next_day} - service returned None. "
                             f"Enhanced model: {'available' if has_enhanced else 'unavailable'}, "
@@ -417,33 +424,37 @@ async def auto_generate_daily_prediction(
                         consecutive_failures += 1
                         state["error_count"] = state.get("error_count", 0) + 1
                         state["last_error"] = f"Prediction service returned None (Enhanced: {has_enhanced}, Lasso: {has_lasso})"
-                        
+
                         if consecutive_failures >= max_consecutive_failures:
-                            logger.error(f"❌ Too many consecutive failures ({consecutive_failures}), waiting before retry")
+                            logger.error(
+                                f"❌ Too many consecutive failures ({consecutive_failures}), waiting before retry")
                             await asyncio.sleep(3600)  # Wait 1 hour
                             consecutive_failures = 0
                         continue
-                    
+
                     # Get prediction method
                     prediction_method = prediction_service.get_model_display_name()
-                    
+
                     # Generate prediction reasons using AI (only when new prediction is created)
                     prediction_reasons = None
                     try:
                         from ai.services.prediction_reason_service import PredictionReasonService
                         from ai.services.gemini_service import GeminiService
                         from ai.config import ai_config
-                        
+
                         if ai_config.is_configured():
-                            logger.info(f"🤖 Generating AI prediction reasons for {next_day}...")
-                            
+                            logger.info(
+                                f"🤖 Generating AI prediction reasons for {next_day}...")
+
                             # Get current price
                             current_price_data = market_data_service.get_realtime_price()
-                            current_price = current_price_data.get('current_price', 0.0)
-                            
+                            current_price = current_price_data.get(
+                                'current_price', 0.0)
+
                             if current_price > 0:
                                 # Get last 10 days of predictions
-                                historical_predictions = prediction_repo.get_historical_predictions(days=10)
+                                historical_predictions = prediction_repo.get_historical_predictions(
+                                    days=10)
                                 formatted_predictions = []
                                 for pred in historical_predictions:
                                     formatted_predictions.append({
@@ -453,86 +464,100 @@ async def auto_generate_daily_prediction(
                                         "accuracy_percentage": pred.get('accuracy_percentage'),
                                         "method": pred.get('method', 'Lasso Regression')
                                     })
-                                
+
                                 # Get aggregated news sentiment (excluding Alpha Vantage data)
                                 news_info = None
                                 try:
                                     from models.news_prediction import NewsSentimentAnalyzer
                                     news_analyzer = NewsSentimentAnalyzer()
                                     # Get aggregated sentiment metrics and top headlines (last 7 days)
-                                    news_info = news_analyzer.get_aggregated_sentiment_for_gemini(days_back=7)
-                                    
+                                    news_info = news_analyzer.get_aggregated_sentiment_for_gemini(
+                                        days_back=7)
+
                                     if news_info.get('news_volume', 0) > 0:
-                                        logger.debug(f"📰 Fetched news sentiment: {news_info.get('news_volume')} articles, sentiment: {news_info.get('combined_sentiment', 0):.2f}")
+                                        logger.debug(
+                                            f"📰 Fetched news sentiment: {news_info.get('news_volume')} articles, sentiment: {news_info.get('combined_sentiment', 0):.2f}")
                                     else:
-                                        logger.debug("📰 No news data available for Gemini")
+                                        logger.debug(
+                                            "📰 No news data available for Gemini")
                                         news_info = None
                                 except Exception as news_error:
-                                    logger.warning(f"⚠️ Error fetching news for Gemini: {news_error}")
+                                    logger.warning(
+                                        f"⚠️ Error fetching news for Gemini: {news_error}")
                                     news_info = None  # Continue without news
-                                
+
                                 # Generate reasons using AI
                                 gemini_service = GeminiService()
-                                reason_service = PredictionReasonService(gemini_service)
-                                
+                                reason_service = PredictionReasonService(
+                                    gemini_service)
+
                                 prediction_reasons = reason_service.generate_prediction_reasons(
                                     current_price=current_price,
                                     predicted_price=predicted_price,
                                     prediction_date=next_day,
                                     prediction_method=prediction_method,
                                     historical_predictions=formatted_predictions,
-                                    news_info=news_info  # Aggregated sentiment metrics (excluding Alpha Vantage)
+                                    # Aggregated sentiment metrics (excluding Alpha Vantage)
+                                    news_info=news_info
                                 )
-                                
+
                                 if prediction_reasons:
-                                    logger.info(f"✅ Generated prediction reasons for {next_day}")
+                                    logger.info(
+                                        f"✅ Generated prediction reasons for {next_day}")
                                 else:
-                                    logger.warning(f"⚠️ Failed to generate prediction reasons for {next_day}")
+                                    logger.warning(
+                                        f"⚠️ Failed to generate prediction reasons for {next_day}")
                         else:
-                            logger.debug("Gemini API not configured, skipping prediction reasons generation")
+                            logger.debug(
+                                "Gemini API not configured, skipping prediction reasons generation")
                     except Exception as reason_error:
-                        logger.warning(f"⚠️ Error generating prediction reasons: {reason_error}")
+                        logger.warning(
+                            f"⚠️ Error generating prediction reasons: {reason_error}")
                         # Continue without reasons - prediction is still saved
-                    
+
                     # Save prediction to database with reasons
                     prediction_repo.save_prediction(
-                        next_day, 
-                        predicted_price, 
+                        next_day,
+                        predicted_price,
                         prediction_method=prediction_method,
                         prediction_reasons=prediction_reasons
                     )
-                    
+
                     logger.info(
                         f"✅ Generated and saved prediction for {next_day}: ${predicted_price:.2f} (Method: {prediction_method})"
                         f"{' with AI reasons' if prediction_reasons else ''}")
-                    
+
                     last_prediction_date = current_date
                     state["last_prediction_date"] = next_day
-                    state["prediction_count"] = state.get("prediction_count", 0) + 1
+                    state["prediction_count"] = state.get(
+                        "prediction_count", 0) + 1
                     consecutive_failures = 0  # Reset on success
-                    
+
                 except Exception as e:
-                    logger.error(f"❌ Error generating daily prediction: {e}", exc_info=True)
+                    logger.error(
+                        f"❌ Error generating daily prediction: {e}", exc_info=True)
                     consecutive_failures += 1
                     state["error_count"] = state.get("error_count", 0) + 1
                     state["last_error"] = str(e)
-                    
+
                     if consecutive_failures >= max_consecutive_failures:
-                        logger.error(f"❌ Too many consecutive failures ({consecutive_failures}), waiting before retry")
+                        logger.error(
+                            f"❌ Too many consecutive failures ({consecutive_failures}), waiting before retry")
                         await asyncio.sleep(3600)  # Wait 1 hour
                         consecutive_failures = 0
             else:
                 # Not time yet, wait and check again
                 # Calculate seconds until next check (check every hour)
                 await asyncio.sleep(3600)  # Check every hour
-                
+
         except asyncio.CancelledError:
             logger.debug(f"Task {task_name} cancelled")
             break
         except Exception as e:
-            logger.error(f"Unexpected error in {task_name}: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error in {task_name}: {e}", exc_info=True)
             await asyncio.sleep(60)  # Brief pause before retry
-    
+
     logger.info(f"🛑 {task_name} task stopped")
 
 
@@ -683,6 +708,317 @@ async def auto_retrain_model(
             break  # Shutdown requested
         except asyncio.TimeoutError:
             continue  # Continue loop
+
+
+async def auto_retrain_and_predict(
+    market_data_service: "MarketDataService",
+    prediction_service: "PredictionService",
+    prediction_repo: "PredictionRepository",
+    task_manager: BackgroundTaskManager
+):
+    """
+    Combined background task that retrains the model first, then generates predictions.
+
+    Features:
+    - Runs daily at configured hour (default: 8 AM, uses auto_predict_hour)
+    - Skips weekends (Saturday and Sunday)
+    - Step 1: Retrains the model with fresh data
+    - Step 2: Generates prediction using the newly retrained model
+    - Step 3: Generates AI prediction reasons from Gemini after prediction is created
+    """
+    task_name = "auto_retrain_and_predict"
+
+    # Check if both tasks are enabled
+    if not settings.auto_retrain_enabled or not settings.auto_predict_enabled:
+        logger.info(
+            "📊 Combined retrain-and-predict task is disabled (one or both features disabled)")
+        return
+
+    # Wait for startup delay
+    try:
+        await asyncio.wait_for(
+            task_manager.shutdown_event.wait(),
+            timeout=float(settings.auto_predict_startup_delay)
+        )
+        return
+    except asyncio.TimeoutError:
+        pass
+
+    # Use the same hour for both (prefer auto_predict_hour)
+    scheduled_hour = settings.auto_predict_hour
+
+    logger.info(
+        f"🔄 Combined retrain-and-predict task started - will run daily at {scheduled_hour}:00 "
+        f"(retrain first, then predict with Gemini reasons, skips weekends)")
+
+    max_consecutive_failures = 3
+    consecutive_failures = 0
+    last_run_date = None
+
+    while not task_manager.shutdown_event.is_set():
+        try:
+            # Initialize/update task state
+            if task_name not in task_manager.task_states:
+                task_manager.task_states[task_name] = {
+                    "status": "running",
+                    "last_run": None,
+                    "last_retrain": None,
+                    "last_prediction_date": None,
+                    "last_error": None,
+                    "run_count": 0,
+                    "retrain_count": 0,
+                    "prediction_count": 0,
+                    "error_count": 0
+                }
+            state = task_manager.task_states[task_name]
+            state["status"] = "running"
+            state["last_run"] = datetime.now().isoformat()
+
+            current_time = datetime.now()
+            current_hour = current_time.hour
+            current_date = current_time.date()
+
+            # Check if it's a weekend (skip Saturday and Sunday)
+            if current_time.weekday() >= 5:
+                if current_time.weekday() == 5:  # Saturday
+                    days_until_monday = 2
+                else:  # Sunday
+                    days_until_monday = 1
+                wait_seconds = days_until_monday * 86400
+                logger.debug(
+                    f"⏸️ Weekend detected (day {current_time.weekday()}). Waiting {days_until_monday} day(s) until next Monday...")
+                try:
+                    await asyncio.wait_for(
+                        task_manager.shutdown_event.wait(),
+                        timeout=min(wait_seconds, 86400.0)
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    continue
+
+            # Check if it's time to run (at the configured hour, once per day)
+            should_run = (
+                current_hour == scheduled_hour and
+                last_run_date != current_date
+            )
+
+            if should_run:
+                logger.info(f"🔄 Starting combined retrain-and-predict task...")
+
+                # ============================================
+                # STEP 1: RETRAIN MODEL
+                # ============================================
+                retrain_success = False
+                try:
+                    # Check if we have enough predictions to justify retraining
+                    stats = prediction_repo.get_comprehensive_stats()
+                    evaluated_count = stats.get('evaluated_predictions', 0)
+
+                    if evaluated_count < settings.auto_retrain_min_predictions:
+                        logger.info(
+                            f"⏭️ Skipping retrain - only {evaluated_count} evaluated predictions "
+                            f"(need {settings.auto_retrain_min_predictions})"
+                        )
+                        retrain_success = True  # Not an error, just skip
+                    else:
+                        logger.info("🔄 Step 1/2: Retraining model...")
+                        retrain_result = await _perform_model_retrain(
+                            prediction_service,
+                            settings.auto_retrain_news_days
+                        )
+
+                        if retrain_result["success"]:
+                            retrain_success = True
+                            state["retrain_count"] = state.get(
+                                "retrain_count", 0) + 1
+                            state["last_retrain"] = datetime.now().isoformat()
+                            logger.info(
+                                f"✅ Model retrained successfully! "
+                                f"R² score: {retrain_result.get('r2_score', 'N/A')}"
+                            )
+                        else:
+                            logger.warning(
+                                f"⚠️ Model retraining failed: {retrain_result.get('error')}. "
+                                f"Continuing with prediction using existing model."
+                            )
+                            retrain_success = True  # Continue anyway
+                except Exception as retrain_error:
+                    logger.warning(
+                        f"⚠️ Error during retrain: {retrain_error}. "
+                        f"Continuing with prediction using existing model."
+                    )
+                    retrain_success = True  # Continue anyway
+
+                # ============================================
+                # STEP 2: GENERATE PREDICTION WITH GEMINI REASONS
+                # ============================================
+                if retrain_success:
+                    try:
+                        logger.info(
+                            "📊 Step 2/2: Generating prediction with Gemini reasons...")
+
+                        # Get next trading day
+                        from ..services.market_data_service import get_next_trading_day
+                        next_trading_day_dt = get_next_trading_day()
+                        next_day = next_trading_day_dt.strftime("%Y-%m-%d")
+
+                        # Check if prediction already exists
+                        if prediction_repo.prediction_exists_for_date(next_day):
+                            logger.info(
+                                f"✅ Prediction already exists for {next_day}, skipping generation")
+                            state["last_prediction_date"] = next_day
+                            last_run_date = current_date
+                        else:
+                            # Generate prediction
+                            logger.debug(
+                                f"Calling prediction_service.predict_next_day() for {next_day}...")
+                            predicted_price = prediction_service.predict_next_day()
+
+                            if predicted_price is None:
+                                logger.error(
+                                    f"❌ Failed to generate prediction for {next_day}")
+                                consecutive_failures += 1
+                                state["error_count"] = state.get(
+                                    "error_count", 0) + 1
+                                state["last_error"] = "Prediction service returned None"
+
+                                if consecutive_failures >= max_consecutive_failures:
+                                    logger.error(
+                                        f"❌ Too many consecutive failures ({consecutive_failures}), waiting before retry")
+                                    await asyncio.sleep(3600)
+                                    consecutive_failures = 0
+                            else:
+                                # Get prediction method
+                                prediction_method = prediction_service.get_model_display_name()
+
+                                # Generate prediction reasons using AI (Gemini) - AFTER prediction is created
+                                prediction_reasons = None
+                                try:
+                                    from ai.services.prediction_reason_service import PredictionReasonService
+                                    from ai.services.gemini_service import GeminiService
+                                    from ai.config import ai_config
+
+                                    if ai_config.is_configured():
+                                        logger.info(
+                                            f"🤖 Generating AI prediction reasons from Gemini for {next_day}...")
+
+                                        # Get current price
+                                        current_price_data = market_data_service.get_realtime_price()
+                                        current_price = current_price_data.get(
+                                            'current_price', 0.0)
+
+                                        if current_price > 0:
+                                            # Get last 10 days of predictions
+                                            historical_predictions = prediction_repo.get_historical_predictions(
+                                                days=10)
+                                            formatted_predictions = []
+                                            for pred in historical_predictions:
+                                                formatted_predictions.append({
+                                                    "date": pred['date'],
+                                                    "predicted_price": pred['predicted_price'],
+                                                    "actual_price": pred.get('actual_price'),
+                                                    "accuracy_percentage": pred.get('accuracy_percentage'),
+                                                    "method": pred.get('method', 'Lasso Regression')
+                                                })
+
+                                            # Get aggregated news sentiment (excluding Alpha Vantage data)
+                                            news_info = None
+                                            try:
+                                                from models.news_prediction import NewsSentimentAnalyzer
+                                                news_analyzer = NewsSentimentAnalyzer()
+                                                # Get aggregated sentiment metrics and top headlines (last 7 days)
+                                                news_info = news_analyzer.get_aggregated_sentiment_for_gemini(
+                                                    days_back=7)
+
+                                                if news_info.get('news_volume', 0) > 0:
+                                                    logger.debug(
+                                                        f"📰 Fetched news sentiment: {news_info.get('news_volume')} articles, sentiment: {news_info.get('combined_sentiment', 0):.2f}")
+                                                else:
+                                                    logger.debug(
+                                                        "📰 No news data available for Gemini")
+                                                    news_info = None
+                                            except Exception as news_error:
+                                                logger.warning(
+                                                    f"⚠️ Error fetching news for Gemini: {news_error}")
+                                                news_info = None  # Continue without news
+
+                                            # Generate reasons using AI (Gemini)
+                                            gemini_service = GeminiService()
+                                            reason_service = PredictionReasonService(
+                                                gemini_service)
+
+                                            prediction_reasons = reason_service.generate_prediction_reasons(
+                                                current_price=current_price,
+                                                predicted_price=predicted_price,
+                                                prediction_date=next_day,
+                                                prediction_method=prediction_method,
+                                                historical_predictions=formatted_predictions,
+                                                # Aggregated sentiment metrics (excluding Alpha Vantage)
+                                                news_info=news_info
+                                            )
+
+                                            if prediction_reasons:
+                                                logger.info(
+                                                    f"✅ Generated prediction reasons from Gemini for {next_day}")
+                                            else:
+                                                logger.warning(
+                                                    f"⚠️ Failed to generate prediction reasons from Gemini for {next_day}")
+                                    else:
+                                        logger.debug(
+                                            "Gemini API not configured, skipping prediction reasons generation")
+                                except Exception as reason_error:
+                                    logger.warning(
+                                        f"⚠️ Error generating prediction reasons from Gemini: {reason_error}")
+                                    # Continue without reasons - prediction is still saved
+
+                                # Save prediction to database with Gemini reasons
+                                prediction_repo.save_prediction(
+                                    next_day,
+                                    predicted_price,
+                                    prediction_method=prediction_method,
+                                    prediction_reasons=prediction_reasons
+                                )
+
+                                logger.info(
+                                    f"✅ Generated and saved prediction for {next_day}: ${predicted_price:.2f} "
+                                    f"(Method: {prediction_method})"
+                                    f"{' with Gemini AI reasons' if prediction_reasons else ''}"
+                                )
+
+                                state["last_prediction_date"] = next_day
+                                state["prediction_count"] = state.get(
+                                    "prediction_count", 0) + 1
+                                consecutive_failures = 0  # Reset on success
+                                last_run_date = current_date
+                    except Exception as predict_error:
+                        logger.error(
+                            f"❌ Error generating prediction: {predict_error}", exc_info=True)
+                        consecutive_failures += 1
+                        state["error_count"] = state.get("error_count", 0) + 1
+                        state["last_error"] = str(predict_error)
+
+                        if consecutive_failures >= max_consecutive_failures:
+                            logger.error(
+                                f"❌ Too many consecutive failures ({consecutive_failures}), waiting before retry")
+                            await asyncio.sleep(3600)
+                            consecutive_failures = 0
+
+                # Update state
+                state["run_count"] = state.get("run_count", 0) + 1
+                state["status"] = "idle"
+            else:
+                # Not time yet, wait and check again (check every hour)
+                await asyncio.sleep(3600)
+
+        except asyncio.CancelledError:
+            logger.debug(f"Task {task_name} cancelled")
+            break
+        except Exception as e:
+            logger.error(
+                f"Unexpected error in {task_name}: {e}", exc_info=True)
+            await asyncio.sleep(60)  # Brief pause before retry
+
+    logger.info(f"🛑 {task_name} task stopped")
 
 
 async def _perform_model_retrain(
