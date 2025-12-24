@@ -254,179 +254,121 @@ class PredictionRepository:
             return cached
         
         db_type = get_db_type()
-        
-        # Check if table exists first (graceful handling for startup)
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                if db_type == "postgresql":
-                    cursor.execute("""
-                        SELECT EXISTS (
-                            SELECT FROM information_schema.tables 
-                            WHERE table_name = 'predictions'
-                        )
-                    """)
-                else:
-                    cursor.execute("""
-                        SELECT name FROM sqlite_master 
-                        WHERE type='table' AND name='predictions'
-                    """)
-                table_exists = cursor.fetchone()
-                if not table_exists or (db_type == "postgresql" and not table_exists[0]):
-                    # Table doesn't exist yet - return default stats
-                    default_result = {
-                        'average_accuracy': 0.0,
-                        'r2_score': None,
-                        'total_predictions': 0,
-                        'evaluated_predictions': 0
-                    }
-                    _cache_query_result(cache_key, default_result, ttl=30)
-                    return default_result
-        except Exception as e:
-            # If we can't check, assume table doesn't exist
-            logger.debug(f"Could not check if predictions table exists: {e}")
-            default_result = {
-                'average_accuracy': 0.0,
-                'r2_score': None,
-                'total_predictions': 0,
-                'evaluated_predictions': 0
-            }
-            _cache_query_result(cache_key, default_result, ttl=30)
-            return default_result
-        
-        try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
 
-                # Single optimized query for PostgreSQL
-                if db_type == "postgresql":
-                    cursor.execute('''
-                        WITH ranked_predictions AS (
-                            SELECT 
-                                prediction_date,
-                                accuracy_percentage,
-                                predicted_price,
-                                actual_price,
-                                prediction_method,
-                                ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
-                            FROM predictions
-                            WHERE accuracy_percentage IS NOT NULL
-                        ),
-                        weekday_predictions AS (
-                            SELECT 
-                                accuracy_percentage,
-                                predicted_price,
-                                actual_price,
-                                prediction_method
-                            FROM ranked_predictions
-                            WHERE rn = 1
-                            AND EXTRACT(DOW FROM prediction_date) BETWEEN 1 AND 5
-                        )
+            # Single optimized query for PostgreSQL
+            if db_type == "postgresql":
+                cursor.execute('''
+                    WITH ranked_predictions AS (
                         SELECT 
-                            COUNT(*) as total_evaluated,
-                            AVG(accuracy_percentage) as avg_accuracy,
-                            COUNT(CASE WHEN prediction_method IS NULL OR prediction_method != 'Manual Entry' THEN 1 END) as model_predictions
-                        FROM weekday_predictions
-                    ''')
-                    row = cursor.fetchone()
-                    evaluated_count = row[0] if row[0] else 0
-                    avg_accuracy = float(row[1]) if row[1] is not None else 0.0
-                    
-                    # Get R² score in same query
-                    cursor.execute('''
-                        WITH ranked_predictions AS (
-                            SELECT 
-                                predicted_price,
-                                actual_price,
-                                ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
-                            FROM predictions
-                            WHERE actual_price IS NOT NULL
-                            AND predicted_price IS NOT NULL
-                            AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
-                            AND ABS(predicted_price - actual_price) > 0.01
-                        )
-                        SELECT predicted_price, actual_price
+                            prediction_date,
+                            accuracy_percentage,
+                            predicted_price,
+                            actual_price,
+                            prediction_method,
+                            ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                        FROM predictions
+                        WHERE accuracy_percentage IS NOT NULL
+                    ),
+                    weekday_predictions AS (
+                        SELECT 
+                            accuracy_percentage,
+                            predicted_price,
+                            actual_price,
+                            prediction_method
                         FROM ranked_predictions
                         WHERE rn = 1
-                    ''')
-                else:
-                    # SQLite - optimized single query
-                    cursor.execute('''
+                        AND EXTRACT(DOW FROM prediction_date) BETWEEN 1 AND 5
+                    )
+                    SELECT 
+                        COUNT(*) as total_evaluated,
+                        AVG(accuracy_percentage) as avg_accuracy,
+                        COUNT(CASE WHEN prediction_method IS NULL OR prediction_method != 'Manual Entry' THEN 1 END) as model_predictions
+                    FROM weekday_predictions
+                ''')
+                row = cursor.fetchone()
+                evaluated_count = row[0] if row[0] else 0
+                avg_accuracy = float(row[1]) if row[1] is not None else 0.0
+                
+                # Get R² score in same query
+                cursor.execute('''
+                    WITH ranked_predictions AS (
                         SELECT 
-                            COUNT(DISTINCT p1.prediction_date) as total_evaluated,
-                            AVG(p1.accuracy_percentage) as avg_accuracy
-                        FROM predictions p1
-                        INNER JOIN (
-                            SELECT prediction_date, MAX(created_at) as max_created_at
-                            FROM predictions
-                            WHERE accuracy_percentage IS NOT NULL
-                            GROUP BY prediction_date
-                        ) p2 ON p1.prediction_date = p2.prediction_date 
-                            AND p1.created_at = p2.max_created_at
-                        WHERE CAST(strftime('%w', p1.prediction_date) AS INTEGER) BETWEEN 1 AND 5
-                    ''')
-                    row = cursor.fetchone()
-                    evaluated_count = row[0] if row[0] else 0
-                    avg_accuracy = float(row[1]) if row[1] is not None else 0.0
-                    
-                    cursor.execute('''
-                        SELECT p1.predicted_price, p1.actual_price
-                        FROM predictions p1
-                        INNER JOIN (
-                            SELECT prediction_date, MAX(created_at) as max_created_at
-                            FROM predictions
-                            WHERE actual_price IS NOT NULL
-                            AND predicted_price IS NOT NULL
-                            AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
-                            AND ABS(predicted_price - actual_price) > 0.01
-                            GROUP BY prediction_date
-                        ) p2 ON p1.prediction_date = p2.prediction_date 
-                            AND p1.created_at = p2.max_created_at
-                    ''')
-
-                price_data = cursor.fetchall()
-                
-                # Calculate R² score
-                r2_score = None
-                if len(price_data) >= 2:
-                    try:
-                        predicted = np.array([float(row[0]) for row in price_data])
-                        actual = np.array([float(row[1]) for row in price_data])
-                        
-                        ss_res = np.sum((actual - predicted) ** 2)
-                        ss_tot = np.sum((actual - np.mean(actual)) ** 2)
-                        
-                        if ss_tot > 0:
-                            r2_score = float(1 - (ss_res / ss_tot))
-                    except Exception as e:
-                        logger.debug(f"Error calculating R²: {e}")
-
-                result = {
-                    'average_accuracy': round(avg_accuracy, 2),
-                    'r2_score': round(r2_score, 4) if r2_score is not None else None,
-                    'total_predictions': 0,  # Will be filled by comprehensive stats
-                    'evaluated_predictions': evaluated_count
-                }
-                
-                _cache_query_result(cache_key, result, ttl=60)
-                return result
-        except Exception as e:
-            # Handle any database errors gracefully (e.g., table doesn't exist)
-            error_msg = str(e).lower()
-            if "no such table" in error_msg or "does not exist" in error_msg or "relation" not in error_msg:
-                logger.debug(f"Predictions table not available: {e}")
+                            predicted_price,
+                            actual_price,
+                            ROW_NUMBER() OVER (PARTITION BY prediction_date ORDER BY created_at DESC) as rn
+                        FROM predictions
+                        WHERE actual_price IS NOT NULL
+                        AND predicted_price IS NOT NULL
+                        AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
+                        AND ABS(predicted_price - actual_price) > 0.01
+                    )
+                    SELECT predicted_price, actual_price
+                    FROM ranked_predictions
+                    WHERE rn = 1
+                ''')
             else:
-                logger.warning(f"Error getting accuracy stats: {e}")
+                # SQLite - optimized single query
+                cursor.execute('''
+                    SELECT 
+                        COUNT(DISTINCT p1.prediction_date) as total_evaluated,
+                        AVG(p1.accuracy_percentage) as avg_accuracy
+                    FROM predictions p1
+                    INNER JOIN (
+                        SELECT prediction_date, MAX(created_at) as max_created_at
+                        FROM predictions
+                        WHERE accuracy_percentage IS NOT NULL
+                        GROUP BY prediction_date
+                    ) p2 ON p1.prediction_date = p2.prediction_date 
+                        AND p1.created_at = p2.max_created_at
+                    WHERE CAST(strftime('%w', p1.prediction_date) AS INTEGER) BETWEEN 1 AND 5
+                ''')
+                row = cursor.fetchone()
+                evaluated_count = row[0] if row[0] else 0
+                avg_accuracy = float(row[1]) if row[1] is not None else 0.0
+                
+                cursor.execute('''
+                    SELECT p1.predicted_price, p1.actual_price
+                    FROM predictions p1
+                    INNER JOIN (
+                        SELECT prediction_date, MAX(created_at) as max_created_at
+                        FROM predictions
+                        WHERE actual_price IS NOT NULL
+                        AND predicted_price IS NOT NULL
+                        AND (prediction_method IS NULL OR prediction_method != 'Manual Entry')
+                        AND ABS(predicted_price - actual_price) > 0.01
+                        GROUP BY prediction_date
+                    ) p2 ON p1.prediction_date = p2.prediction_date 
+                        AND p1.created_at = p2.max_created_at
+                ''')
+
+            price_data = cursor.fetchall()
             
-            # Return default values on error
-            default_result = {
-                'average_accuracy': 0.0,
-                'r2_score': None,
-                'total_predictions': 0,
-                'evaluated_predictions': 0
+            # Calculate R² score
+            r2_score = None
+            if len(price_data) >= 2:
+                try:
+                    predicted = np.array([float(row[0]) for row in price_data])
+                    actual = np.array([float(row[1]) for row in price_data])
+                    
+                    ss_res = np.sum((actual - predicted) ** 2)
+                    ss_tot = np.sum((actual - np.mean(actual)) ** 2)
+                    
+                    if ss_tot > 0:
+                        r2_score = float(1 - (ss_res / ss_tot))
+                except Exception as e:
+                    logger.debug(f"Error calculating R²: {e}")
+
+            result = {
+                'average_accuracy': round(avg_accuracy, 2),
+                'r2_score': round(r2_score, 4) if r2_score is not None else None,
+                'total_predictions': 0,  # Will be filled by comprehensive stats
+                'evaluated_predictions': evaluated_count
             }
-            _cache_query_result(cache_key, default_result, ttl=30)
-            return default_result
+            
+            _cache_query_result(cache_key, result, ttl=60)
+            return result
 
     @staticmethod
     def get_comprehensive_stats() -> Dict:

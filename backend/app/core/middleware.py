@@ -151,11 +151,22 @@ class TimingMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.debug(f"Failed to record metrics: {e}")
         
-        # Log slow requests
-        if process_time > 1.0:
-            logger.warning(
-                f"Slow request: {request.method} {request.url.path} "
-                f"took {process_time:.4f}s"
+        # Log requests with user-friendly formatting (only log, no slow request warnings)
+        from .logging_config import Emojis, log_request
+        
+        # Log request with status and duration (at debug level to reduce noise)
+        if process_time > 5.0:  # Only log very slow requests (>5s) at info level
+            log_request(
+                logger,
+                request.method,
+                request.url.path,
+                response.status_code,
+                process_time
+            )
+        else:
+            # Log at debug level for normal requests
+            logger.debug(
+                f"{Emojis.REQUEST} {request.method} {request.url.path} → {response.status_code} ({process_time:.3f}s)"
             )
         
         return response

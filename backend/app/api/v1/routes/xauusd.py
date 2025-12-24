@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends
 from typing import Optional
 from datetime import datetime
+from functools import lru_cache
 
 from ....core.dependencies import (
     get_market_data_service,
@@ -30,10 +31,36 @@ async def get_daily_data(
         
     Note: If start_date/end_date are provided, they take precedence over days parameter
     """
+    from ....core.response_cache import response_cache
+    
+    # Create cache key from parameters
+    cache_key_parts = [f"daily_data", f"days:{days}"]
+    if start_date:
+        cache_key_parts.append(f"start:{start_date}")
+    if end_date:
+        cache_key_parts.append(f"end:{end_date}")
+    cache_key = "_".join(cache_key_parts)
+    
+    # Cache for 30 seconds (market data changes frequently)
+    cached = response_cache.get(cache_key, ttl=30)
+    if cached is not None:
+        return cached
+    
     data = market_data_service.get_daily_data(days=days, start_date=start_date, end_date=end_date)
-    # Add model info if not already present
+    
+    # Add model info if not already present (reuse cached model info response)
     if isinstance(data, dict) and "model_info" not in data:
-        data["model_info"] = prediction_service.get_model_info()
+        # Try to get from cached model-info endpoint response
+        model_info_cache_key = "model_info"
+        cached_model_info_response = response_cache.get(model_info_cache_key, ttl=30)
+        if cached_model_info_response and isinstance(cached_model_info_response, dict):
+            data["model_info"] = cached_model_info_response.get("model", {})
+        else:
+            # Fallback: get directly (will be slow but cached for next time)
+            data["model_info"] = prediction_service.get_model_info()
+    
+    # Cache the result
+    response_cache.set(cache_key, data, ttl=30)
     return data
 
 
@@ -245,7 +272,14 @@ async def get_accuracy_visualization(
 ):
     """Get accuracy statistics for visualization"""
     from ....core.logging_config import get_logger
+    from ....core.response_cache import response_cache
     logger = get_logger(__name__)
+    
+    # Cache based on days parameter (60 seconds TTL)
+    cache_key = f"accuracy_visualization_{days}"
+    cached = response_cache.get(cache_key, ttl=60)
+    if cached is not None:
+        return cached
     
     try:
         # Check if prediction repo is available
@@ -290,12 +324,15 @@ async def get_accuracy_visualization(
                 "timestamp": datetime.now().isoformat()
             }
 
-        return {
+        result = {
             "status": "success",
             "data": visualization_data['data'],
             "statistics": visualization_data['statistics'],
             "timestamp": datetime.now().isoformat()
         }
+        # Cache the result
+        response_cache.set(cache_key, result, ttl=60)
+        return result
     except Exception as e:
         logger.error(f"Unexpected error getting accuracy visualization: {e}", exc_info=True)
         return {
@@ -318,7 +355,14 @@ async def get_model_info(
         - live_accuracy_stats: Full live accuracy statistics including average_accuracy, total_predictions, etc.
     """
     from ....core.logging_config import get_logger
+    from ....core.response_cache import response_cache
     logger = get_logger(__name__)
+    
+    # Cache model info for 30 seconds (model info doesn't change frequently)
+    cache_key = "model_info"
+    cached = response_cache.get(cache_key, ttl=30)
+    if cached is not None:
+        return cached
     
     try:
         model_info = prediction_service.get_model_info()
@@ -345,12 +389,15 @@ async def get_model_info(
             "r2_score": "Primary score shown to users (uses live if available)"
         }
         
-        return {
+        result = {
             "status": "success",
             "model": model_info,
             "r2_explanation": r2_explanation,
             "timestamp": datetime.now().isoformat()
         }
+        # Cache the result
+        response_cache.set(cache_key, result, ttl=30)
+        return result
     except Exception as e:
         logger.error(f"Error getting model info: {e}", exc_info=True)
         # Return a valid response even on error
@@ -377,9 +424,17 @@ async def get_prediction_stats(
     prediction_repo=Depends(get_prediction_repo)
 ):
     """Get comprehensive prediction statistics (all time)"""
+    from ....core.response_cache import response_cache
+    
+    # Cache stats for 60 seconds
+    cache_key = "prediction_stats"
+    cached = response_cache.get(cache_key, ttl=60)
+    if cached is not None:
+        return cached
+    
     try:
         stats = prediction_repo.get_comprehensive_stats()
-        return {
+        result = {
             "status": "success",
             "data": {
                 "total_predictions": stats['total_predictions'],
@@ -396,6 +451,9 @@ async def get_prediction_stats(
                 "evaluation_rate_percent": stats['evaluation_rate']
             }
         }
+        # Cache the result
+        response_cache.set(cache_key, result, ttl=60)
+        return result
     except Exception as e:
         from ....core.logging_config import get_logger
         logger = get_logger(__name__)
@@ -411,15 +469,26 @@ async def get_pending_predictions(
     prediction_repo=Depends(get_prediction_repo)
 ):
     """Get list of pending predictions awaiting market results"""
+    from ....core.response_cache import response_cache
+    
+    # Cache for 30 seconds (pending predictions can change)
+    cache_key = "pending_predictions"
+    cached = response_cache.get(cache_key, ttl=30)
+    if cached is not None:
+        return cached
+    
     try:
         pending = prediction_repo.get_pending_predictions()
-        return {
+        result = {
             "status": "success",
             "data": {
                 "pending_count": len(pending),
                 "predictions": pending
             }
         }
+        # Cache the result
+        response_cache.set(cache_key, result, ttl=30)
+        return result
     except Exception as e:
         from ....core.logging_config import get_logger
         logger = get_logger(__name__)
@@ -454,6 +523,14 @@ async def get_prediction_history(
     prediction_repo=Depends(get_prediction_repo)
 ):
     """Get historical predictions"""
+    from ....core.response_cache import response_cache
+    
+    # Cache based on days parameter (60 seconds TTL)
+    cache_key = f"prediction_history_{days}"
+    cached = response_cache.get(cache_key, ttl=60)
+    if cached is not None:
+        return cached
+    
     try:
         predictions = prediction_repo.get_historical_predictions(days=days)
         # Format to match frontend expectations
@@ -467,11 +544,14 @@ async def get_prediction_history(
                 "status": "completed" if pred['actual_price'] is not None else "pending",
                 "method": pred.get('method', 'Lasso Regression')
             })
-        return {
+        result = {
             "status": "success",
             "predictions": formatted_predictions,
             "total": len(formatted_predictions)
         }
+        # Cache the result
+        response_cache.set(cache_key, result, ttl=60)
+        return result
     except Exception as e:
         from ....core.logging_config import get_logger
         logger = get_logger(__name__)

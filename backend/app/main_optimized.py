@@ -49,7 +49,6 @@ from .core.exceptions import (
     validation_exception_handler,
     general_exception_handler
 )
-from fastapi.exceptions import RequestValidationError
 from .core.middleware import (
     SecurityHeadersMiddleware,
     CompressionMiddleware,
@@ -69,7 +68,7 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     Application lifespan context manager with comprehensive startup/shutdown
-
+    
     Handles:
     - Database initialization (sync and async)
     - Service initialization
@@ -79,21 +78,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     try:
         logger.info(f"🚀 Server starting in {settings.environment} mode")
-
+        
         # Store settings in app state for access in exception handlers
         app.state.settings = settings
 
         # Initialize ML models
+        logger.info("Initializing ML models...")
         lasso_predictor, news_enhanced_predictor = initialize_models()
 
         # Initialize services
-        logger.debug("Initializing services...")
+        logger.info("Initializing services...")
         prediction_service = PredictionService(
             lasso_predictor=lasso_predictor,
             news_enhanced_predictor=news_enhanced_predictor
         )
-        market_data_service = MarketDataService(
-            prediction_service=prediction_service)
+        market_data_service = MarketDataService(prediction_service=prediction_service)
         exchange_service = ExchangeService()
         prediction_repo = PredictionRepository()
 
@@ -112,38 +111,66 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.prediction_repo = prediction_repo
 
         # Initialize database (sync for backward compatibility)
-        logger.debug("Initializing database...")
+        logger.info("Initializing database...")
         try:
             if settings.use_postgresql:
                 if init_postgresql_pool():
-                    logger.debug("✅ PostgreSQL database connected")
+                    logger.info("✅ PostgreSQL database connected (sync)")
                 else:
                     logger.warning("PostgreSQL failed - using SQLite")
                     settings.use_postgresql = False
-
+            
             init_database()
             init_backup_database()
-            logger.debug("✅ Database initialized")
+            logger.info("✅ Database initialized successfully (sync)")
         except Exception as e:
-            logger.error(
-                f"❌ Database initialization failed: {e}", exc_info=True)
+            logger.error(f"❌ Database initialization failed: {e}", exc_info=True)
             raise
 
         # Initialize async database (if available)
         try:
             if settings.use_postgresql:
                 if await init_postgresql_pool_async():
-                    logger.debug(
-                        "✅ Async PostgreSQL connection pool initialized")
+                    logger.info("✅ Async PostgreSQL connection pool initialized")
                 await init_database_async()
         except Exception as e:
-            logger.debug(
-                f"Async database initialization failed (non-critical): {e}")
+            logger.warning(f"Async database initialization failed (non-critical): {e}")
 
-        # Log essential system information only
-        from .core.logging_config import Emojis
-        logger.info(
-            f"{Emojis.CONFIG} Environment: {settings.environment} | Database: {'PostgreSQL' if settings.use_postgresql else 'SQLite'}")
+        # Log system configuration
+        logger.info("=" * 60)
+        logger.info("System Configuration:")
+        logger.info(f"  Environment: {settings.environment}")
+        logger.info(f"  Log Level: {settings.log_level.upper()}")
+        logger.info(f"  Database: {'PostgreSQL' if settings.use_postgresql else 'SQLite'}")
+        logger.info(f"  Auto-update: {'Enabled' if settings.auto_update_enabled else 'Disabled'}")
+        logger.info(f"  Auto-retrain: {'Enabled' if settings.auto_retrain_enabled else 'Disabled'}")
+        logger.info(f"  Auto-predict: {'Enabled' if settings.auto_predict_enabled else 'Disabled'}")
+        logger.info("=" * 60)
+
+        # Log ML model information
+        model_info = prediction_service.get_model_info()
+        logger.info("🤖 ML Model Information:")
+        logger.info(f"  Active Model: {model_info.get('active_model', 'No Model Available')}")
+        
+        training_r2 = model_info.get('training_r2_score')
+        live_r2 = model_info.get('live_r2_score')
+        
+        if training_r2 is not None:
+            logger.info(f"  Training R²: {training_r2:.4f} ({training_r2*100:.2f}%)")
+        if live_r2 is not None:
+            live_stats = model_info.get('live_accuracy_stats', {})
+            eval_count = live_stats.get('evaluated_predictions', 0)
+            logger.info(f"  Live R²: {live_r2:.4f} ({live_r2*100:.2f}%) from {eval_count} predictions")
+        
+        selected_count = model_info.get('selected_features_count', 0)
+        total_count = model_info.get('total_features', model_info.get('features_count', 0))
+        if total_count > 0:
+            logger.info(f"  Features: {selected_count}/{total_count} selected")
+        if model_info.get('selected_features'):
+            top_features = ', '.join(model_info['selected_features'][:3])
+            logger.info(f"  Top Features: {top_features}...")
+        if model_info.get('fallback_available'):
+            logger.info("  Fallback Model: Available (Lasso Regression)")
 
         # Initialize WebSocket connection manager
         manager = ConnectionManager()
@@ -155,7 +182,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Start background tasks
         logger.info("Starting background tasks...")
-
+        
         # Broadcast task
         broadcast_task = asyncio.create_task(
             broadcast_daily_data(manager, market_data_service, task_manager)
@@ -170,10 +197,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     market_data_service, prediction_repo, task_manager
                 )
             )
-            task_manager.register_task(
-                "auto_update_pending_predictions", update_task)
-            logger.info(
-                f"  ✓ Auto-update task started (interval: {settings.auto_update_interval}s)")
+            task_manager.register_task("auto_update_pending_predictions", update_task)
+            logger.info(f"  ✓ Auto-update task started (interval: {settings.auto_update_interval}s)")
         else:
             logger.info("  ⊘ Auto-update task disabled")
 
@@ -184,10 +209,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     market_data_service, prediction_service, prediction_repo, task_manager
                 )
             )
-            task_manager.register_task(
-                "auto_generate_daily_prediction", predict_task)
-            logger.info(
-                f"  ✓ Auto-predict task started (hour: {settings.auto_predict_hour}:00)")
+            task_manager.register_task("auto_generate_daily_prediction", predict_task)
+            logger.info(f"  ✓ Auto-predict task started (hour: {settings.auto_predict_hour}:00)")
         else:
             logger.info("  ⊘ Auto-predict task disabled")
 
@@ -199,8 +222,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 )
             )
             task_manager.register_task("auto_retrain_model", retrain_task)
-            logger.info(
-                f"  ✓ Auto-retrain task started (hour: {settings.auto_retrain_hour}:00)")
+            logger.info(f"  ✓ Auto-retrain task started (hour: {settings.auto_retrain_hour}:00)")
         else:
             logger.info("  ⊘ Auto-retrain task disabled")
 
@@ -222,20 +244,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("🛑 Server shutting down...")
 
         # Shutdown background tasks
-        task_manager = getattr(app.state, 'task_manager', None)
+        task_manager = app.state.get('task_manager')
         if task_manager:
             try:
                 await asyncio.wait_for(task_manager.shutdown(), timeout=5.0)
                 logger.info("  ✓ Background tasks stopped")
             except asyncio.TimeoutError:
-                logger.warning(
-                    "  ⚠ Task shutdown timed out, forcing cancellation")
+                logger.warning("  ⚠ Task shutdown timed out, forcing cancellation")
             except asyncio.CancelledError:
-                logger.debug(
-                    "  ⊘ Task shutdown cancelled (expected during hot reload)")
+                logger.debug("  ⊘ Task shutdown cancelled (expected during hot reload)")
 
         # Close WebSocket connections
-        manager = getattr(app.state, 'websocket_manager', None)
+        manager = app.state.get('websocket_manager')
         if manager:
             try:
                 await asyncio.wait_for(manager.disconnect_all(), timeout=2.0)
@@ -243,8 +263,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             except asyncio.TimeoutError:
                 logger.warning("  ⚠ WebSocket disconnect timed out")
             except asyncio.CancelledError:
-                logger.debug(
-                    "  ⊘ WebSocket disconnect cancelled (expected during hot reload)")
+                logger.debug("  ⊘ WebSocket disconnect cancelled (expected during hot reload)")
 
         # Close async database pool
         try:
@@ -277,7 +296,6 @@ app = FastAPI(
 
 # Add exception handlers
 app.add_exception_handler(BaseAPIException, base_api_exception_handler)
-app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, general_exception_handler)
 
 # Add middleware (order matters - last added is first executed)
@@ -300,8 +318,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include API routes (api_router already has prefix="/api/v1")
-app.include_router(api_router)
+# Include API routes
+app.include_router(api_router, prefix="/api/v1")
 
 
 # Root endpoints
@@ -347,13 +365,13 @@ async def favicon():
 @app.websocket("/ws/xauusd")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time data updates"""
-    manager = getattr(app.state, 'websocket_manager', None)
-    market_data_service = getattr(app.state, 'market_data_service', None)
-
+    manager = app.state.get('websocket_manager')
+    market_data_service = app.state.get('market_data_service')
+    
     if not manager or not market_data_service:
         await websocket.close(code=1011, reason="Service unavailable")
         return
-
+    
     await manager.connect(websocket)
     try:
         last_sent_data = None
@@ -362,8 +380,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             # Handle rate limiting
             if daily_data.get('status') == 'rate_limited':
-                wait_seconds = daily_data.get(
-                    'rate_limit_info', {}).get('wait_seconds', 60)
+                wait_seconds = daily_data.get('rate_limit_info', {}).get('wait_seconds', 60)
                 if daily_data != last_sent_data:
                     await manager.send_personal_message(json.dumps(daily_data), websocket)
                     last_sent_data = daily_data
@@ -394,3 +411,4 @@ if __name__ == "__main__":
         log_level=settings.log_level.lower(),
         access_log=True
     )
+

@@ -26,8 +26,7 @@ def initialize_models():
     BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 
     # Initialize News-Enhanced Lasso predictor (PRIMARY)
-    logger.info("🔄 Initializing ML models...")
-    logger.info("📊 Primary Model: News-Enhanced Lasso Regression")
+    logger.debug("🔄 Initializing ML models...")
     news_enhanced_predictor = NewsEnhancedLassoPredictor()
     enhanced_model_path = BACKEND_DIR / 'models/enhanced_lasso_gold_model.pkl'
 
@@ -35,31 +34,25 @@ def initialize_models():
         try:
             news_enhanced_predictor.load_enhanced_model(
                 str(enhanced_model_path))
-            logger.info("✅ News-Enhanced Lasso model (PRIMARY) loaded successfully")
-            logger.info(
-                f"   Model accuracy (R²): {news_enhanced_predictor.best_score:.4f}")
-            logger.info(
-                f"   Selected features: {len(news_enhanced_predictor.selected_features)}")
+            logger.debug(f"✅ News-Enhanced Lasso model loaded (R²: {news_enhanced_predictor.best_score:.4f}, Features: {len(news_enhanced_predictor.selected_features)})")
         except Exception as e:
-            logger.warning(f"⚠️  News-Enhanced model (PRIMARY) failed to load: {e}")
+            logger.warning(f"⚠️  News-Enhanced model failed to load: {e}")
             news_enhanced_predictor = None
     else:
-        logger.warning(
-            f"⚠️  News-Enhanced model (PRIMARY) not found at: {enhanced_model_path}")
-        logger.info("   Will use Basic Lasso Regression as fallback if available")
+        logger.warning(f"⚠️  News-Enhanced model not found at: {enhanced_model_path}")
+        news_enhanced_predictor = None
 
     # Initialize Basic Lasso Regression predictor (FALLBACK)
-    logger.info("📊 Fallback Model: Basic Lasso Regression")
     lasso_predictor = LassoGoldPredictor()
     try:
         lasso_predictor.load_model(
             str(BACKEND_DIR / 'models/lasso_gold_model.pkl'))
-        logger.info("✅ Basic Lasso Regression model (FALLBACK) loaded successfully")
+        logger.debug("✅ Basic Lasso Regression model loaded")
     except Exception as e:
-        logger.warning(f"⚠️  Basic Lasso model (FALLBACK) not found: {e}")
+        logger.debug(f"Basic Lasso model not found: {e}")
         lasso_predictor = None
 
-    # Summary
+    # Summary - only log if there's an issue
     if news_enhanced_predictor and news_enhanced_predictor.model is not None:
         logger.info("🤖 ML Model: News-Enhanced Lasso Regression (PRIMARY)")
     elif lasso_predictor and lasso_predictor.model is not None:
