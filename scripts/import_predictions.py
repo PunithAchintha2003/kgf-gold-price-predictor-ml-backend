@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Import predictions from backup SQL file"""
-from backend.app.repositories.prediction_repository import PredictionRepository
-from backend.app.core.database import init_postgresql_pool, get_db_type
 import sys
 from pathlib import Path
 
-# Add backend to path
-sys.path.insert(0, str(Path(__file__).parent / "backend"))
+# Add project root to path
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+from backend.app.repositories.prediction_repository import PredictionRepository
+from backend.app.core.database import init_postgresql_pool, get_db_type
 
 # Initialize PostgreSQL connection
 print("Initializing database connection...")
@@ -81,3 +84,4 @@ if __name__ == "__main__":
     print(f"❌ Failed: {failed}")
     print(f"📊 Total: {len(predictions_data)}")
     print("=" * 60)
+

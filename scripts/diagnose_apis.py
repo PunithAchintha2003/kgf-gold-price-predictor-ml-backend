@@ -4,6 +4,12 @@ Diagnostic script to check API issues
 """
 import sys
 import traceback
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 print("=" * 80)
 print("API DIAGNOSTIC TOOL")
@@ -95,6 +101,7 @@ issues = []
 try:
     from backend.app.api.v1.routes.xauusd import router
     import inspect
+    import asyncio
     for route in router.routes:
         if hasattr(route, 'endpoint'):
             sig = inspect.signature(route.endpoint)

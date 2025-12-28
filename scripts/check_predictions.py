@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 """Check predictions in database and compare with backup"""
+import sys
+from pathlib import Path
+
+# Add project root to path
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from backend.app.core.database import init_postgresql_pool, get_db_connection
 from backend.app.repositories.prediction_repository import PredictionRepository
 from datetime import datetime
@@ -119,3 +127,4 @@ if stats['total_predictions'] != len(weekday_dates):
         f"\n⚠️  DISCREPANCY: Stats shows {stats['total_predictions']} but should be {len(weekday_dates)}")
     print(
         f"   Missing: {len(weekday_dates) - stats['total_predictions']} predictions")
+
