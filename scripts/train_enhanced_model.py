@@ -11,6 +11,7 @@ Requirements:
     - API keys for NewsAPI and Alpha Vantage (optional, for enhanced features)
     - Sufficient disk space for model file (~10-50MB)
 """
+from models.news_prediction import main
 import sys
 from pathlib import Path
 
@@ -25,7 +26,6 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 # Import after path setup
-from models.news_prediction import main
 
 if __name__ == "__main__":
     print("=" * 60)
@@ -68,4 +68,3 @@ if __name__ == "__main__":
         print("   - Verify API keys in .env file (if using)")
         print("   - Ensure sufficient disk space")
         sys.exit(1)
-
