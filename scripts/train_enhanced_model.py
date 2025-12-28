@@ -4,19 +4,18 @@ Script to train the News-Enhanced Lasso model for gold price prediction.
 Run this script to generate the enhanced_lasso_gold_model.pkl file.
 
 Usage:
-    python train_enhanced_model.py
+    python scripts/train_enhanced_model.py
 
 Requirements:
     - Internet connection for fetching market data and news
     - API keys for NewsAPI and Alpha Vantage (optional, for enhanced features)
     - Sufficient disk space for model file (~10-50MB)
 """
-from models.news_prediction import main
 import sys
 from pathlib import Path
 
 # Add backend to Python path BEFORE importing models
-project_root = Path(__file__).resolve().parent
+project_root = Path(__file__).resolve().parent.parent
 backend_path = project_root / "backend"
 
 if str(backend_path) not in sys.path:
@@ -26,6 +25,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 # Import after path setup
+from models.news_prediction import main
 
 if __name__ == "__main__":
     print("=" * 60)
@@ -68,3 +68,4 @@ if __name__ == "__main__":
         print("   - Verify API keys in .env file (if using)")
         print("   - Ensure sufficient disk space")
         sys.exit(1)
+
