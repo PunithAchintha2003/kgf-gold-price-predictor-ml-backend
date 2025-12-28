@@ -45,34 +45,35 @@ try:
         get_exchange_service
     )
     print("✅ Dependency functions imported")
-    
+
     # Check if services are set
     import asyncio
+
     async def test_deps():
         try:
             market_service = await get_market_data_service()
             print(f"✅ Market data service: {type(market_service).__name__}")
         except RuntimeError as e:
             print(f"⚠️  Market data service not initialized: {e}")
-        
+
         try:
             prediction_service = await get_prediction_service()
             print(f"✅ Prediction service: {type(prediction_service).__name__}")
         except RuntimeError as e:
             print(f"⚠️  Prediction service not initialized: {e}")
-        
+
         try:
             prediction_repo = await get_prediction_repo()
             print(f"✅ Prediction repo: {type(prediction_repo).__name__}")
         except RuntimeError as e:
             print(f"⚠️  Prediction repo not initialized: {e}")
-        
+
         try:
             exchange_service = await get_exchange_service()
             print(f"✅ Exchange service: {type(exchange_service).__name__}")
         except RuntimeError as e:
             print(f"⚠️  Exchange service not initialized: {e}")
-    
+
     asyncio.run(test_deps())
 except Exception as e:
     print(f"❌ Failed to test dependencies: {e}")
@@ -83,12 +84,12 @@ print("\n4. Testing route handlers...")
 try:
     from backend.app.api.v1.routes import xauusd, health, exchange
     print("✅ Route modules imported")
-    
+
     # Check if routes have handlers
     xauusd_routes = [r.path for r in xauusd.router.routes]
     print(f"✅ XAUUSD routes: {len(xauusd_routes)} routes")
     print(f"   Routes: {xauusd_routes}")
-    
+
 except Exception as e:
     print(f"❌ Failed to test routes: {e}")
     traceback.print_exc()
@@ -114,11 +115,14 @@ try:
                             try:
                                 # Try to get the dependency function
                                 if asyncio.iscoroutinefunction(dep):
-                                    print(f"   ✅ Route {route.path}: async dependency {dep.__name__}")
+                                    print(
+                                        f"   ✅ Route {route.path}: async dependency {dep.__name__}")
                                 else:
-                                    print(f"   ✅ Route {route.path}: sync dependency {dep.__name__}")
+                                    print(
+                                        f"   ✅ Route {route.path}: sync dependency {dep.__name__}")
                             except Exception as e:
-                                issues.append(f"Route {route.path}: dependency issue - {e}")
+                                issues.append(
+                                    f"Route {route.path}: dependency issue - {e}")
 except Exception as e:
     issues.append(f"Route inspection failed: {e}")
 
@@ -132,4 +136,3 @@ else:
 print("\n" + "=" * 80)
 print("DIAGNOSTIC COMPLETE")
 print("=" * 80)
-
