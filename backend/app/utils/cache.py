@@ -93,7 +93,7 @@ class MarketDataCache:
                 # Only log once per minute to reduce log spam
                 if not hasattr(self, '_last_rate_limit_log') or (current_time - getattr(self, '_last_rate_limit_log', 0)) > 60:
                     logger.info(
-                        f"Rate limited with no cached data. Will retry after {wait_remaining:.1f}s")
+                        f"⚡ INFO  Rate limited and no cached data available. Will retry after {wait_remaining:.1f}s")
                     self._last_rate_limit_log = current_time
                 return None, None, {
                     'rate_limited': True,
@@ -170,7 +170,7 @@ class MarketDataCache:
                     # Only log once per minute to reduce log spam
                     if not hasattr(self, '_last_market_rate_limit_warning') or (current_time - getattr(self, '_last_market_rate_limit_warning', 0)) > 60:
                         logger.warning(
-                            f"Rate limited from {symbol}. Backing off for {self._rate_limit_backoff} seconds. Error: {e}")
+                            f"❌ WARN  Rate limited from {symbol}. Backing off for {self._rate_limit_backoff:.0f} seconds. Error: Too Many Requests. Rate limited. Try after a while.")
                         self._last_market_rate_limit_warning = current_time
                     # Don't try other symbols if rate limited - they'll likely fail too
                     break
@@ -185,7 +185,7 @@ class MarketDataCache:
                         # Only log once per minute to reduce log spam
                         if not hasattr(self, '_last_market_rate_limit_warning') or (current_time - getattr(self, '_last_market_rate_limit_warning', 0)) > 60:
                             logger.warning(
-                                f"Rate limited from {symbol} (detected by message). Backing off for {self._rate_limit_backoff} seconds. Error: {e}")
+                                f"❌ WARN  Rate limited from {symbol}. Backing off for {self._rate_limit_backoff:.0f} seconds. Error: Too Many Requests. Rate limited. Try after a while.")
                             self._last_market_rate_limit_warning = current_time
                         break
                     logger.warning(
@@ -221,7 +221,7 @@ class MarketDataCache:
                 # Only log once per minute to reduce log spam
                 if not hasattr(self, '_last_rate_limit_log') or (current_time - getattr(self, '_last_rate_limit_log', 0)) > 60:
                     logger.info(
-                        f"Rate limited and no cached data available. Will retry after {wait_remaining:.1f}s")
+                        f"⚡ INFO  Rate limited and no cached data available. Will retry after {wait_remaining:.1f}s")
                     self._last_rate_limit_log = current_time
                 return None, None, {
                     'rate_limited': True,
@@ -341,7 +341,7 @@ class MarketDataCache:
                         # Only log once per minute to reduce log spam
                         if not hasattr(self, '_last_realtime_rate_limit_warning') or (current_time - getattr(self, '_last_realtime_rate_limit_warning', 0)) > 60:
                             logger.warning(
-                                f"Rate limited from {symbol} for realtime data. Backing off for {self._rate_limit_backoff} seconds. Error: {e}")
+                                f"❌ WARN  Rate limited from {symbol} for realtime data. Backing off for {self._rate_limit_backoff:.0f} seconds. Error: Too Many Requests. Rate limited. Try after a while.")
                             self._last_realtime_rate_limit_warning = current_time
                         break
                     except Exception as e:
@@ -355,7 +355,7 @@ class MarketDataCache:
                             # Only log once per minute to reduce log spam
                             if not hasattr(self, '_last_realtime_rate_limit_warning') or (current_time - getattr(self, '_last_realtime_rate_limit_warning', 0)) > 60:
                                 logger.warning(
-                                    f"Rate limited from {symbol} for realtime data (detected by message). Backing off for {self._rate_limit_backoff} seconds. Error: {e}")
+                                    f"❌ WARN  Rate limited from {symbol} for realtime data. Backing off for {self._rate_limit_backoff:.0f} seconds. Error: Too Many Requests. Rate limited. Try after a while.")
                                 self._last_realtime_rate_limit_warning = current_time
                             break
                         if symbol == symbols_to_try[-1]:

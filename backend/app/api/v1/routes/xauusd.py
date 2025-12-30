@@ -96,8 +96,20 @@ async def get_enhanced_prediction(
         try:
             current_price_data = market_data_service.get_realtime_price()
             current_price = current_price_data.get('current_price', 0.0)
+            status = current_price_data.get('status', 'success')
             
             if current_price <= 0:
+                # If rate limited, provide more informative message
+                if status == 'rate_limited':
+                    rate_limit_info = current_price_data.get('rate_limit_info', {})
+                    wait_seconds = rate_limit_info.get('wait_seconds', 0)
+                    logger.warning(f"Invalid current price: {current_price} (rate limited, retry after {wait_seconds}s)")
+                    return {
+                        "status": "rate_limited",
+                        "message": f"Data provider rate limit. Please retry after {wait_seconds} seconds.",
+                        "timestamp": datetime.now().isoformat(),
+                        "rate_limit_info": rate_limit_info
+                    }
                 logger.warning(f"Invalid current price: {current_price}")
                 return {
                     "status": "error",
@@ -646,8 +658,21 @@ async def get_prediction_reasons(
             try:
                 current_price_data = market_data_service.get_realtime_price()
                 current_price = current_price_data.get('current_price', 0.0)
+                status = current_price_data.get('status', 'success')
                 
                 if current_price <= 0:
+                    # If rate limited, provide more informative message
+                    if status == 'rate_limited':
+                        rate_limit_info = current_price_data.get('rate_limit_info', {})
+                        wait_seconds = rate_limit_info.get('wait_seconds', 0)
+                        logger.warning(f"Invalid current price: {current_price} (rate limited, retry after {wait_seconds}s)")
+                        return {
+                            "status": "rate_limited",
+                            "message": f"Data provider rate limit. Please retry after {wait_seconds} seconds.",
+                            "reasons": None,
+                            "timestamp": datetime.now().isoformat(),
+                            "rate_limit_info": rate_limit_info
+                        }
                     logger.warning(f"Invalid current price: {current_price}")
                     return {
                         "status": "error",
