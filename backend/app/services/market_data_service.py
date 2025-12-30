@@ -6,6 +6,7 @@ import pandas as pd
 
 from ..repositories.prediction_repository import PredictionRepository
 from ..utils.cache import market_data_cache
+from ..utils.fallback_data import fallback_provider
 from ..schemas.market_data import DailyDataResponse, DailyDataPoint
 from ..schemas.prediction import Prediction, AccuracyStats
 
@@ -59,7 +60,7 @@ class MarketDataService:
                     wait_seconds = int(rate_limit_info.get('wait_seconds', 0))
                     # Only log once per minute to reduce log spam
                     if not hasattr(self, '_last_rate_limit_log') or (datetime.now().timestamp() - getattr(self, '_last_rate_limit_log', 0)) > 60:
-                        logger.info(f"Rate limited by data provider. Retry after {wait_seconds} seconds")
+                        logger.info(f"ℹ️ INFO  Rate limited by data provider. Retry after {wait_seconds} seconds")
                         self._last_rate_limit_log = datetime.now().timestamp()
                     # Try to get historical predictions even when rate limited
                     try:
@@ -400,20 +401,33 @@ class MarketDataService:
         if is_weekend(datetime.now()):
             # Get daily data which already has the last trading day's price
             daily_data = self.get_daily_data()
-            # Handle rate limit case
+            # Handle rate limit case - use fallback data instead of 0.0
             if daily_data.get('status') == 'rate_limited':
+                fallback_data = fallback_provider.get_fallback_realtime_data()
                 return {
                     "symbol": "XAUUSD",
-                    "current_price": 0.0,
+                    "current_price": fallback_data.get('current_price', 0.0) if fallback_data else 0.0,
                     "timestamp": datetime.now().isoformat(),
                     "status": "rate_limited",
                     "message": daily_data.get('message', 'Data provider rate limit'),
                     "rate_limit_info": daily_data.get('rate_limit_info', {}),
-                    "note": "Using last trading day's closing price (market closed on weekends)"
+                    "note": "Using fallback data (market closed on weekends, rate limited)"
                 }
+            current_price = daily_data.get('current_price', 0.0)
+            # If current_price is 0.0, use fallback data
+            if current_price <= 0:
+                fallback_data = fallback_provider.get_fallback_realtime_data()
+                if fallback_data:
+                    return {
+                        "symbol": "XAUUSD",
+                        "current_price": fallback_data.get('current_price', 0.0),
+                        "timestamp": datetime.now().isoformat(),
+                        "status": daily_data.get('status', 'success'),
+                        "note": "Using fallback data (last trading day's closing price unavailable)"
+                    }
             return {
                 "symbol": "XAUUSD",
-                "current_price": daily_data.get('current_price', 0.0),
+                "current_price": current_price,
                 "timestamp": datetime.now().isoformat(),
                 "status": daily_data.get('status', 'success'),
                 "note": "Using last trading day's closing price (market closed on weekends)"
@@ -422,31 +436,51 @@ class MarketDataService:
         # On weekdays, try to get real-time data
         realtime_data = market_data_cache.get_realtime_price_data()
         if realtime_data:
-            return {
-                "symbol": realtime_data.get('symbol', 'XAUUSD'),
-                "current_price": realtime_data.get('current_price', 0.0),
-                "timestamp": datetime.now().isoformat(),
-                "status": "success"
-            }
-        else:
-            # Fallback to daily data (last trading day)
-            daily_data = self.get_daily_data()
-            # Handle rate limit case
-            if daily_data.get('status') == 'rate_limited':
+            current_price = realtime_data.get('current_price', 0.0)
+            # Validate price is reasonable
+            if current_price > 0:
                 return {
-                    "symbol": "XAUUSD",
-                    "current_price": 0.0,
+                    "symbol": realtime_data.get('symbol', 'XAUUSD'),
+                    "current_price": current_price,
                     "timestamp": datetime.now().isoformat(),
-                    "status": "rate_limited",
-                    "message": daily_data.get('message', 'Data provider rate limit'),
-                    "rate_limit_info": daily_data.get('rate_limit_info', {})
+                    "status": "success"
                 }
+            # If price is invalid, fall through to fallback logic
+        
+        # Fallback to daily data (last trading day)
+        daily_data = self.get_daily_data()
+        # Handle rate limit case - use fallback data instead of 0.0
+        if daily_data.get('status') == 'rate_limited':
+            fallback_data = fallback_provider.get_fallback_realtime_data()
             return {
                 "symbol": "XAUUSD",
-                "current_price": daily_data.get('current_price', 0.0),
+                "current_price": fallback_data.get('current_price', 0.0) if fallback_data else 0.0,
                 "timestamp": datetime.now().isoformat(),
-                "status": daily_data.get('status', 'success')
+                "status": "rate_limited",
+                "message": daily_data.get('message', 'Data provider rate limit'),
+                "rate_limit_info": daily_data.get('rate_limit_info', {}),
+                "note": "Using fallback data (rate limited)"
             }
+        
+        current_price = daily_data.get('current_price', 0.0)
+        # If current_price is 0.0, use fallback data
+        if current_price <= 0:
+            fallback_data = fallback_provider.get_fallback_realtime_data()
+            if fallback_data:
+                return {
+                    "symbol": "XAUUSD",
+                    "current_price": fallback_data.get('current_price', 0.0),
+                    "timestamp": datetime.now().isoformat(),
+                    "status": daily_data.get('status', 'success'),
+                    "note": "Using fallback data (last trading day's closing price unavailable)"
+                }
+        
+        return {
+            "symbol": "XAUUSD",
+            "current_price": current_price,
+            "timestamp": datetime.now().isoformat(),
+            "status": daily_data.get('status', 'success')
+        }
 
     def update_pending_predictions(self) -> Dict:
         """Update pending predictions with actual market prices"""
