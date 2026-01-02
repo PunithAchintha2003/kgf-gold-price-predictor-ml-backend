@@ -127,3 +127,5 @@ if stats['total_predictions'] != len(weekday_dates):
         f"\n⚠️  DISCREPANCY: Stats shows {stats['total_predictions']} but should be {len(weekday_dates)}")
     print(
         f"   Missing: {len(weekday_dates) - stats['total_predictions']} predictions")
+
+

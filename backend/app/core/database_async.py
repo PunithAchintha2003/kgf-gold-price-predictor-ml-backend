@@ -1,7 +1,7 @@
 """Async database connection and initialization for optimal performance"""
 import asyncio
 import logging
-from typing import Optional, AsyncGenerator
+from typing import Optional, AsyncGenerator, Any
 from contextlib import asynccontextmanager
 
 from .config import settings
@@ -25,7 +25,8 @@ except ImportError:
     aiosqlite = None
 
 # PostgreSQL connection pool
-_postgresql_pool: Optional[asyncpg.Pool] = None
+# Using Any instead of asyncpg.Pool to avoid AttributeError when asyncpg is None
+_postgresql_pool: Optional[Any] = None
 
 
 async def init_postgresql_pool_async() -> bool:
