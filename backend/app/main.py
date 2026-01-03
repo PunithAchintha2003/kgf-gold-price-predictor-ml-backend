@@ -97,13 +97,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             prediction_service=prediction_service)
         exchange_service = ExchangeService()
         prediction_repo = PredictionRepository()
+        
+        # Initialize spot trading service
+        import sys
+        from pathlib import Path
+        backend_dir = Path(__file__).resolve().parent.parent  # backend/app/main.py -> backend
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+        from spot_trade.service import SpotTradingService
+        spot_trading_service = SpotTradingService(
+            market_data_service=market_data_service,
+            exchange_service=exchange_service
+        )
 
         # Set services for dependency injection
         set_services(
             market_data_service=market_data_service,
             prediction_service=prediction_service,
             prediction_repo=prediction_repo,
-            exchange_service=exchange_service
+            exchange_service=exchange_service,
+            spot_trading_service=spot_trading_service
         )
 
         # Store services in app state
@@ -124,6 +137,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
             init_database()
             init_backup_database()
+            
+            # Initialize spot trading tables
+            import sys
+            from pathlib import Path
+            backend_dir = Path(__file__).resolve().parent.parent  # backend/app/main.py -> backend
+            if str(backend_dir) not in sys.path:
+                sys.path.insert(0, str(backend_dir))
+            from spot_trade.models import init_spot_trade_tables
+            init_spot_trade_tables()
+            logger.debug("✅ Spot trading tables initialized")
+            
             logger.debug("✅ Database initialized")
         except Exception as e:
             logger.error(
