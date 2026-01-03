@@ -84,6 +84,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Store settings in app state for access in exception handlers
         app.state.settings = settings
 
+        # Add backend directory to sys.path for spot_trade imports (once at the start)
+        import sys
+        from pathlib import Path
+        # backend/app/main.py -> backend
+        backend_dir = Path(__file__).resolve().parent.parent
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+
         # Initialize ML models
         lasso_predictor, news_enhanced_predictor = initialize_models()
 
@@ -97,13 +105,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             prediction_service=prediction_service)
         exchange_service = ExchangeService()
         prediction_repo = PredictionRepository()
-        
+
         # Initialize spot trading service
-        import sys
-        from pathlib import Path
-        backend_dir = Path(__file__).resolve().parent.parent  # backend/app/main.py -> backend
-        if str(backend_dir) not in sys.path:
-            sys.path.insert(0, str(backend_dir))
         from spot_trade.service import SpotTradingService
         spot_trading_service = SpotTradingService(
             market_data_service=market_data_service,
@@ -128,26 +131,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # Initialize database (sync for backward compatibility)
         logger.debug("Initializing database...")
         try:
-            if settings.use_postgresql:
+            # Use a local variable to track PostgreSQL status instead of modifying settings
+            use_postgresql = settings.use_postgresql
+            if use_postgresql:
                 if init_postgresql_pool():
                     logger.debug("✅ PostgreSQL database connected")
                 else:
                     logger.warning("PostgreSQL failed - using SQLite")
-                    settings.use_postgresql = False
+                    use_postgresql = False
 
             init_database()
             init_backup_database()
-            
+
             # Initialize spot trading tables
-            import sys
-            from pathlib import Path
-            backend_dir = Path(__file__).resolve().parent.parent  # backend/app/main.py -> backend
-            if str(backend_dir) not in sys.path:
-                sys.path.insert(0, str(backend_dir))
             from spot_trade.models import init_spot_trade_tables
             init_spot_trade_tables()
             logger.debug("✅ Spot trading tables initialized")
-            
+
             logger.debug("✅ Database initialized")
         except Exception as e:
             logger.error(
@@ -252,7 +252,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.error(f"❌ Failed to start application: {e}", exc_info=True)
         raise
 
-    yield
+    # Yield control to FastAPI - this is where the app runs
+    # If interrupted (Ctrl+C), this will raise CancelledError
+    try:
+        yield
+    except asyncio.CancelledError:
+        # Expected during KeyboardInterrupt - suppress the error
+        logger.debug("Application interrupted (expected during shutdown)")
+        raise  # Re-raise to allow proper cleanup
 
     # Shutdown
     try:

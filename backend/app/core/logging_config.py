@@ -95,21 +95,40 @@ class CancelledErrorFilter(logging.Filter):
     These are expected when the server is interrupted (Ctrl+C) and shouldn't be logged as errors.
     """
     def filter(self, record: logging.LogRecord) -> bool:
+        # Check exception type
         if record.exc_info:
             exc_type = record.exc_info[0]
             if exc_type and exc_type.__name__ == 'CancelledError':
                 pathname_lower = str(record.pathname).lower()
                 message_lower = str(record.getMessage()).lower()
+                # Suppress CancelledError from starlette, uvicorn, or lifespan operations
                 if ('starlette' in pathname_lower or 
                     'uvicorn' in pathname_lower or
                     'lifespan' in pathname_lower or
                     'lifespan' in message_lower or
-                    'receive_queue' in message_lower):
+                    'receive_queue' in message_lower or
+                    'receive' in message_lower or
+                    'routing.py' in pathname_lower):
                     return False
+        
+        # Check message content for CancelledError references
         message_lower = str(record.getMessage()).lower()
-        if ('cancellederror' in message_lower and 
-            ('lifespan' in message_lower or 'receive' in message_lower)):
-            return False
+        if ('cancellederror' in message_lower or 'cancelled' in message_lower):
+            # Suppress if it's related to lifespan, receive, or shutdown
+            if ('lifespan' in message_lower or 
+                'receive' in message_lower or
+                'shutdown' in message_lower or
+                'receive_queue' in message_lower):
+                return False
+        
+        # Suppress ERROR level logs from starlette.routing during shutdown
+        if record.levelno >= logging.ERROR:
+            pathname_lower = str(record.pathname).lower()
+            if 'starlette' in pathname_lower and 'routing' in pathname_lower:
+                message_lower = str(record.getMessage()).lower()
+                if 'lifespan' in message_lower or 'receive' in message_lower:
+                    return False
+        
         return True
 
 
@@ -320,6 +339,11 @@ def setup_logging():
     starlette_logger = logging.getLogger("starlette")
     starlette_logger.setLevel(logging.WARNING)
     starlette_logger.addFilter(CancelledErrorFilter())
+    
+    # Suppress asyncio CancelledError logs during shutdown
+    asyncio_logger = logging.getLogger("asyncio")
+    asyncio_logger.setLevel(logging.WARNING)
+    asyncio_logger.addFilter(CancelledErrorFilter())
     
     # Suppress watchfiles (file change detection)
     watchfiles_logger = logging.getLogger("watchfiles")
