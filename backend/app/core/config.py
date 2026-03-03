@@ -213,6 +213,24 @@ class Settings(BaseSettings):
         ge=0,
         description="Auto-predict startup delay in seconds"
     )
+    
+    # Prediction validation settings
+    prediction_min_abs_price: float = Field(
+        default=500.0,
+        gt=0,
+        description="Minimum absolute price for XAU/USD prediction validation (USD per troy ounce)"
+    )
+    prediction_max_abs_price: float = Field(
+        default=50000.0,
+        gt=0,
+        description="Maximum absolute price for XAU/USD prediction validation (USD per troy ounce)"
+    )
+    prediction_max_daily_percent_move: float = Field(
+        default=20.0,
+        gt=0,
+        le=100,
+        description="Maximum allowed daily percent move for XAU/USD predictions (percentage)"
+    )
 
     @computed_field
     @property
