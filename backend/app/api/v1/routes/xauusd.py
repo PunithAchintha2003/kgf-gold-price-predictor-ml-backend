@@ -9,6 +9,8 @@ from ....core.dependencies import (
     get_prediction_service,
     get_prediction_repo
 )
+from ....core.config import get_settings
+from ....utils.prediction_validation import validate_prediction, format_validation_error
 
 router = APIRouter()
 
@@ -186,46 +188,76 @@ async def get_enhanced_prediction(
                 "timestamp": datetime.now().isoformat()
             }
 
-        # Validate prediction is within reasonable range (gold typically $1,000-$5,000 per troy ounce)
-        # If prediction is outside this range, it's likely a model error
-        MIN_REASONABLE_PRICE = 1000.0
-        MAX_REASONABLE_PRICE = 5000.0
-        MAX_PERCENT_CHANGE = 50.0  # Max 50% change in one day is extremely rare
+        # Validate prediction using industry-standard validation
+        settings = get_settings()
+        validation_result = validate_prediction(
+            predicted_price=predicted_price,
+            current_price=current_price,
+            min_abs_price=settings.prediction_min_abs_price,
+            max_abs_price=settings.prediction_max_abs_price,
+            max_daily_percent_move=settings.prediction_max_daily_percent_move
+        )
         
-        if predicted_price < MIN_REASONABLE_PRICE or predicted_price > MAX_REASONABLE_PRICE:
-            logger.error(
-                f"⚠️  Prediction {predicted_price:.2f} is outside reasonable range "
-                f"(${MIN_REASONABLE_PRICE:.2f} - ${MAX_REASONABLE_PRICE:.2f}). "
-                f"Current price: ${current_price:.2f}. This may indicate a model error."
-            )
+        # If primary prediction fails validation, try fallback model
+        if not validation_result.is_valid:
+            logger.error(f"Primary prediction validation failed: {validation_result.error_reason}")
+            
             # Try fallback model if available
             if prediction_service.lasso_predictor and prediction_service.lasso_predictor.model is not None:
-                logger.info("🔄 Attempting fallback model due to unreasonable prediction...")
+                logger.info("🔄 Attempting fallback model due to validation failure...")
                 try:
                     fallback_prediction = prediction_service.lasso_predictor.predict_next_price(
                         prediction_service.lasso_predictor.create_fundamental_features(
                             prediction_service.lasso_predictor.fetch_market_data()
                         )
                     )
-                    if fallback_prediction and MIN_REASONABLE_PRICE <= fallback_prediction <= MAX_REASONABLE_PRICE:
-                        logger.info(f"✅ Fallback model produced reasonable prediction: ${fallback_prediction:.2f}")
+                    
+                    # Validate fallback prediction
+                    fallback_validation = validate_prediction(
+                        predicted_price=fallback_prediction,
+                        current_price=current_price,
+                        min_abs_price=settings.prediction_min_abs_price,
+                        max_abs_price=settings.prediction_max_abs_price,
+                        max_daily_percent_move=settings.prediction_max_daily_percent_move
+                    )
+                    
+                    if fallback_validation.is_valid:
+                        logger.info(f"✅ Fallback model produced valid prediction: ${fallback_prediction:.2f}")
                         predicted_price = fallback_prediction
+                        validation_result = fallback_validation
                     else:
-                        logger.warning(f"⚠️  Fallback model also produced unreasonable prediction: ${fallback_prediction:.2f}")
+                        logger.warning(
+                            f"⚠️  Fallback model also failed validation: {fallback_validation.error_reason}"
+                        )
+                        # Both models failed - return error response
+                        return {
+                            "status": "error",
+                            "message": (
+                                f"Prediction validation failed for both primary and fallback models. "
+                                f"Primary: {validation_result.error_reason}. "
+                                f"Fallback: {fallback_validation.error_reason}"
+                            ),
+                            "timestamp": datetime.now().isoformat()
+                        }
                 except Exception as fallback_error:
                     logger.error(f"Fallback model failed: {fallback_error}")
+                    # Return error for primary validation failure
+                    return {
+                        "status": "error",
+                        "message": f"Primary prediction failed validation and fallback model error: {format_validation_error(validation_result)}",
+                        "timestamp": datetime.now().isoformat()
+                    }
+            else:
+                # No fallback available - return error
+                return {
+                    "status": "error",
+                    "message": f"Prediction validation failed: {format_validation_error(validation_result)}",
+                    "timestamp": datetime.now().isoformat()
+                }
 
-        # Calculate change
-        change = predicted_price - current_price
-        change_percentage = (change / current_price *
-                             100) if current_price > 0 else 0
-        
-        # Warn if change percentage is extreme
-        if abs(change_percentage) > MAX_PERCENT_CHANGE:
-            logger.warning(
-                f"⚠️  Extreme predicted change: {change_percentage:.2f}% "
-                f"(${change:.2f}). This may indicate a model error."
-            )
+        # Use validated prediction values
+        change = validation_result.change
+        change_percentage = validation_result.change_percentage
 
         # Get method name and model information
         try:
@@ -245,6 +277,15 @@ async def get_enhanced_prediction(
                 "change": round(change, 2),
                 "change_percentage": round(change_percentage, 2),
                 "method": method
+            },
+            "validation": {
+                "is_valid": validation_result.is_valid,
+                "warning_flags": validation_result.warning_flags,
+                "thresholds": {
+                    "min_abs_price": settings.prediction_min_abs_price,
+                    "max_abs_price": settings.prediction_max_abs_price,
+                    "max_daily_percent_move": settings.prediction_max_daily_percent_move
+                }
             },
             "model": {
                 "name": model_info.get("active_model", "Unknown"),
