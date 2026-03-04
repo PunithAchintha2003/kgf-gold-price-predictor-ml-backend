@@ -24,7 +24,7 @@ from spot_trade.models import (
 logger = logging.getLogger(__name__)
 
 # Spread in LKR
-SPREAD_LKR = 500.0
+SPREAD_LKR = 1000.0
 
 # Conversion constants: 1 troy ounce = 31.1035 grams, 1 pawn = 8 grams
 TROY_OUNCE_GRAMS = 31.1035
@@ -137,7 +137,10 @@ class SpotTradingService:
                 # Update trade status to completed
                 update_trade_status(trade_id, OrderStatus.COMPLETED)
                 
-                logger.info(f"✅ BUY order executed: User {user_id}, Quantity: {quantity} pawn, Price: {buy_price_lkr} LKR/pawn")
+                logger.info(
+                    f"✅ BUY order executed: User {user_id}, Quantity: {quantity} pawn (~{quantity * PAWN_GRAMS:.2f} g), "
+                    f"Price: {buy_price_lkr} LKR/pawn"
+                )
                 
                 return {
                     "trade_id": trade_id,
@@ -179,11 +182,13 @@ class SpotTradingService:
             # Convert quantity from pawn to troy ounces for validation
             quantity_troy_ounces = quantity * PAWN_TO_TROY_OUNCE
             
-            # Validate sufficient gold balance
+            # Validate sufficient gold balance (report in grams for clarity)
             if gold_balance_troy_ounces < quantity_troy_ounces:
                 gold_balance_pawn = gold_balance_troy_ounces * TROY_OUNCE_TO_PAWN
+                required_grams = quantity * PAWN_GRAMS
+                available_grams = gold_balance_pawn * PAWN_GRAMS
                 raise ValueError(
-                    f"Insufficient gold balance. Required: {quantity:.4f} pawn, Available: {gold_balance_pawn:.4f} pawn"
+                    f"Insufficient gold balance. Required: {required_grams:.2f} grams, Available: {available_grams:.2f} grams"
                 )
             
             # Validate minimum order size
@@ -219,7 +224,10 @@ class SpotTradingService:
                 # Update trade status to completed
                 update_trade_status(trade_id, OrderStatus.COMPLETED)
                 
-                logger.info(f"✅ SELL order executed: User {user_id}, Quantity: {quantity} pawn, Price: {sell_price_lkr} LKR/pawn")
+                logger.info(
+                    f"✅ SELL order executed: User {user_id}, Quantity: {quantity} pawn (~{quantity * PAWN_GRAMS:.2f} g), "
+                    f"Price: {sell_price_lkr} LKR/pawn"
+                )
                 
                 return {
                     "trade_id": trade_id,
@@ -229,7 +237,7 @@ class SpotTradingService:
                     "price": sell_price_lkr,  # LKR per pawn
                     "total_value": total_value_lkr,
                     "status": OrderStatus.COMPLETED,
-                    "message": f"Successfully sold {quantity:.4f} pawn of gold at {sell_price_lkr:.2f} LKR per pawn",
+                    "message": f"Successfully sold {quantity * PAWN_GRAMS:.2f} grams ({quantity:.4f} pawn) of gold at {sell_price_lkr:.2f} LKR per pawn",
                     "created_at": datetime.now().isoformat()
                 }
             except Exception as e:

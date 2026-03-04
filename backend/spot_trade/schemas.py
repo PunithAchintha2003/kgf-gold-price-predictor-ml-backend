@@ -4,12 +4,17 @@ from typing import Optional
 from datetime import datetime
 
 
+# 1 pawn = 8 grams; enforce 0.5–50 grams -> 0.0625–6.25 pawn
+MIN_QUANTITY_PAWN = 0.5 / 8.0
+MAX_QUANTITY_PAWN = 50.0 / 8.0
+
+
 class SpotTradePriceResponse(BaseModel):
     """Response schema for current gold price"""
     symbol: str = "XAUUSD"
     current_price_lkr: float = Field(..., description="Current gold price in LKR per troy ounce")
     current_price_usd: float = Field(..., description="Current gold price in USD per troy ounce")
-    spread_lkr: float = Field(default=500.0, description="Spread in LKR")
+    spread_lkr: float = Field(default=1000.0, description="Spread in LKR")
     buy_price_lkr: float = Field(..., description="Buy price (current + spread/2) in LKR")
     sell_price_lkr: float = Field(..., description="Sell price (current - spread/2) in LKR")
     exchange_rate: float = Field(..., description="USD to LKR exchange rate")
@@ -18,29 +23,35 @@ class SpotTradePriceResponse(BaseModel):
 
 class BuyOrderRequest(BaseModel):
     """Request schema for BUY order"""
-    quantity: float = Field(..., gt=0, description="Quantity of gold to buy (in pawn)")
+    quantity: float = Field(
+        ...,
+        description="Quantity of gold to buy (in pawn, equivalent to 0.5–50 grams range)",
+    )
     
     @field_validator('quantity')
     @classmethod
-    def validate_quantity(cls, v):
-        if v <= 0:
-            raise ValueError("Quantity must be greater than 0")
-        if v > 4000:  # Reasonable limit (approx 1000 troy ounces = ~3888 pawn)
-            raise ValueError("Quantity cannot exceed 4000 pawn")
+    def validate_quantity(cls, v: float) -> float:
+        if v < MIN_QUANTITY_PAWN:
+            raise ValueError("Quantity must be at least 0.5 grams")
+        if v > MAX_QUANTITY_PAWN:
+            raise ValueError("Quantity cannot exceed 50 grams")
         return v
 
 
 class SellOrderRequest(BaseModel):
     """Request schema for SELL order"""
-    quantity: float = Field(..., gt=0, description="Quantity of gold to sell (in pawn)")
+    quantity: float = Field(
+        ...,
+        description="Quantity of gold to sell (in pawn, equivalent to 0.5–50 grams range)",
+    )
     
     @field_validator('quantity')
     @classmethod
-    def validate_quantity(cls, v):
-        if v <= 0:
-            raise ValueError("Quantity must be greater than 0")
-        if v > 4000:  # Reasonable limit (approx 1000 troy ounces = ~3888 pawn)
-            raise ValueError("Quantity cannot exceed 4000 pawn")
+    def validate_quantity(cls, v: float) -> float:
+        if v < MIN_QUANTITY_PAWN:
+            raise ValueError("Quantity must be at least 0.5 grams")
+        if v > MAX_QUANTITY_PAWN:
+            raise ValueError("Quantity cannot exceed 50 grams")
         return v
 
 
