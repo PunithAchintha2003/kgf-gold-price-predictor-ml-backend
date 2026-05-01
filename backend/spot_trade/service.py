@@ -1,6 +1,6 @@
 """Spot trading service"""
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from datetime import datetime
 import sys
 from pathlib import Path
@@ -18,7 +18,14 @@ from spot_trade.models import (
     create_trade,
     update_trade_status,
     OrderType,
-    OrderStatus
+    OrderStatus,
+    WalletTransactionType,
+    WalletTransactionStatus,
+    create_wallet_transaction,
+    get_wallet_transaction_by_id,
+    get_wallet_transaction_by_stripe_session,
+    update_wallet_transaction_status,
+    get_wallet_transactions,
 )
 
 logger = logging.getLogger(__name__)
@@ -278,4 +285,108 @@ class SpotTradingService:
         except Exception as e:
             logger.error(f"Error getting user balance: {e}", exc_info=True)
             raise ValueError(f"Failed to get user balance: {str(e)}")
+
+    def create_deposit_checkout(self, user_id: str, amount: float, stripe_session_id: str) -> Dict:
+        """Create pending deposit transaction before Stripe checkout"""
+        if amount < 5000:
+            raise ValueError("Minimum deposit amount is LKR 5,000")
+        get_or_create_user_balance(user_id)
+        tx_id = create_wallet_transaction(
+            user_id=user_id,
+            transaction_type=WalletTransactionType.DEPOSIT,
+            amount=amount,
+            status=WalletTransactionStatus.PENDING,
+            payment_method="STRIPE",
+            stripe_session_id=stripe_session_id,
+            notes="Waiting for Stripe payment confirmation",
+        )
+        if not tx_id:
+            raise ValueError("Failed to create deposit transaction")
+        return {"transaction_id": tx_id, "status": WalletTransactionStatus.PENDING}
+
+    def complete_deposit_by_stripe_session(self, stripe_session_id: str) -> Dict:
+        """Mark stripe deposit completed and credit wallet once"""
+        tx = get_wallet_transaction_by_stripe_session(stripe_session_id)
+        if not tx:
+            raise ValueError("Deposit transaction not found")
+        if tx["status"] == WalletTransactionStatus.COMPLETED:
+            return tx
+        if tx["transaction_type"] != WalletTransactionType.DEPOSIT:
+            raise ValueError("Invalid transaction type for Stripe completion")
+
+        balance = get_or_create_user_balance(tx["user_id"])
+        new_lkr_balance = balance["lkr_balance"] + tx["amount"]
+        update_user_balance(tx["user_id"], lkr_balance=new_lkr_balance)
+        update_wallet_transaction_status(tx["id"], WalletTransactionStatus.COMPLETED)
+        return get_wallet_transaction_by_id(tx["id"]) or tx
+
+    def confirm_deposit_for_user(self, user_id: str, stripe_session_id: str, payment_status: str) -> Dict:
+        """Confirm a Stripe deposit for the authenticated user."""
+        tx = get_wallet_transaction_by_stripe_session(stripe_session_id)
+        if not tx:
+            raise ValueError("Deposit transaction not found")
+        if tx["user_id"] != user_id:
+            raise ValueError("Deposit transaction does not belong to the current user")
+        if tx["status"] == WalletTransactionStatus.COMPLETED:
+            return tx
+        if payment_status.lower() != "paid":
+            raise ValueError("Payment is not completed yet")
+        return self.complete_deposit_by_stripe_session(stripe_session_id)
+
+    def request_withdrawal(self, user_id: str, amount: float, bank_name: str, bank_account_number: str, bank_account_name: str) -> Dict:
+        """Create pending withdrawal and reserve balance immediately"""
+        if amount <= 0:
+            raise ValueError("Withdrawal amount must be greater than zero")
+        balance = get_or_create_user_balance(user_id)
+        if amount > balance["lkr_balance"]:
+            raise ValueError("Insufficient balance")
+        tx_id = create_wallet_transaction(
+            user_id=user_id,
+            transaction_type=WalletTransactionType.WITHDRAWAL,
+            amount=amount,
+            status=WalletTransactionStatus.PENDING,
+            payment_method="BANK_TRANSFER",
+            bank_name=bank_name,
+            bank_account_number=bank_account_number,
+            bank_account_name=bank_account_name,
+            notes="Pending admin approval. Processing can take up to 3 days.",
+        )
+        if not tx_id:
+            raise ValueError("Failed to create withdrawal request")
+        update_user_balance(user_id, lkr_balance=balance["lkr_balance"] - amount)
+        return get_wallet_transaction_by_id(tx_id) or {"id": tx_id, "status": WalletTransactionStatus.PENDING}
+
+    def approve_withdrawal(self, transaction_id: int, admin_user_id: str, approve: bool, notes: Optional[str] = None) -> Dict:
+        """Approve or reject pending withdrawal"""
+        tx = get_wallet_transaction_by_id(transaction_id)
+        if not tx:
+            raise ValueError("Withdrawal transaction not found")
+        if tx["transaction_type"] != WalletTransactionType.WITHDRAWAL:
+            raise ValueError("Transaction is not a withdrawal")
+        if tx["status"] != WalletTransactionStatus.PENDING:
+            raise ValueError(f"Only pending withdrawals can be processed. Current status: {tx['status']}")
+
+        if approve:
+            update_wallet_transaction_status(transaction_id, WalletTransactionStatus.APPROVED, approved_by=admin_user_id, notes=notes)
+        else:
+            # Refund reserved amount on rejection
+            balance = get_or_create_user_balance(tx["user_id"])
+            update_user_balance(tx["user_id"], lkr_balance=balance["lkr_balance"] + tx["amount"])
+            update_wallet_transaction_status(transaction_id, WalletTransactionStatus.REJECTED, approved_by=admin_user_id, notes=notes)
+
+        return get_wallet_transaction_by_id(transaction_id) or tx
+
+    def get_wallet_transactions_for_user(self, user_id: str, limit: int = 100, offset: int = 0) -> List[Dict]:
+        """Get wallet transactions for user"""
+        return get_wallet_transactions(user_id=user_id, limit=limit, offset=offset)
+
+    def get_wallet_transactions_for_admin(
+        self,
+        status: Optional[str] = None,
+        transaction_type: Optional[str] = None,
+        limit: int = 200,
+        offset: int = 0
+    ) -> List[Dict]:
+        """Get wallet transactions for admin portal"""
+        return get_wallet_transactions(status=status, transaction_type=transaction_type, limit=limit, offset=offset)
 

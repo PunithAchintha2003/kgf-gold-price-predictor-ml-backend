@@ -115,3 +115,55 @@ class OpenOrdersResponse(BaseModel):
     orders: list[OpenOrderItem]
     total: int
 
+
+class DepositCheckoutRequest(BaseModel):
+    amount: float = Field(..., ge=5000, description="Deposit amount in LKR (minimum 5000)")
+
+
+class DepositCheckoutResponse(BaseModel):
+    checkout_url: str
+    session_id: str
+    transaction_id: int
+    status: str
+
+
+class DepositConfirmRequest(BaseModel):
+    session_id: str = Field(..., min_length=5, description="Stripe checkout session id")
+
+
+class WithdrawRequest(BaseModel):
+    amount: float = Field(..., gt=0, description="Withdrawal amount in LKR")
+    bank_name: str = Field(..., min_length=2, max_length=255)
+    bank_account_number: str = Field(..., min_length=4, max_length=100)
+    bank_account_name: str = Field(..., min_length=2, max_length=255)
+
+
+class WalletTransactionItem(BaseModel):
+    id: int
+    user_id: str
+    transaction_type: str
+    amount: float
+    status: str
+    payment_method: Optional[str] = None
+    stripe_session_id: Optional[str] = None
+    bank_name: Optional[str] = None
+    bank_account_number: Optional[str] = None
+    bank_account_name: Optional[str] = None
+    notes: Optional[str] = None
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class WalletTransactionsResponse(BaseModel):
+    transactions: list[WalletTransactionItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class WithdrawApprovalRequest(BaseModel):
+    approve: bool = Field(..., description="true to approve, false to reject")
+    notes: Optional[str] = Field(default=None, max_length=1000)
+

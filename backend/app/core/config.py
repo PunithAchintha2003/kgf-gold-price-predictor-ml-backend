@@ -126,6 +126,30 @@ class Settings(BaseSettings):
         description="Google Gemini API key"
     )
 
+    # Authentication
+    jwt_secret: str = Field(
+        default="change-this-to-a-strong-random-secret-min-32-chars",
+        description="JWT secret shared with Node backend"
+    )
+    jwt_algorithm: str = Field(
+        default="HS256",
+        description="JWT algorithm"
+    )
+
+    # Stripe
+    stripe_secret_key: Optional[str] = Field(
+        default=None,
+        description="Stripe secret key"
+    )
+    stripe_webhook_secret: Optional[str] = Field(
+        default=None,
+        description="Stripe webhook signing secret"
+    )
+    frontend_base_url: str = Field(
+        default="http://localhost:4000",
+        description="Frontend base URL for Stripe redirects"
+    )
+
     # CORS settings
     cors_origins: List[str] = Field(
         default_factory=lambda: ["*"],
