@@ -127,6 +127,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.market_data_service = market_data_service
         app.state.exchange_service = exchange_service
         app.state.prediction_repo = prediction_repo
+        app.state.spot_trading_service = spot_trading_service
 
         # Initialize database (sync for backward compatibility)
         logger.debug("Initializing database...")
