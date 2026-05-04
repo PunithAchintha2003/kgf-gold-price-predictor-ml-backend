@@ -73,6 +73,7 @@ def init_spot_trade_tables():
                     quantity DECIMAL(20, 8) NOT NULL CHECK (quantity > 0),
                     price DECIMAL(20, 2) NOT NULL CHECK (price > 0),
                     total_value DECIMAL(20, 2) NOT NULL CHECK (total_value > 0),
+                    fee DECIMAL(20, 2) DEFAULT 0.0,
                     status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'COMPLETED', 'FAILED', 'CANCELLED')),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -91,6 +92,18 @@ def init_spot_trade_tables():
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_spot_trades_status ON spot_trades(status)
             """)
+
+            # Migration: Add fee column to existing spot_trades table if it doesn't exist (PostgreSQL)
+            try:
+                cursor.execute("""
+                    ALTER TABLE spot_trades ADD COLUMN fee DECIMAL(20, 2) DEFAULT 0.0
+                """)
+                conn.commit()
+                logger.info("✅ Added fee column to spot_trades table (PostgreSQL)")
+            except Exception:
+                # Column already exists or other error - continue
+                conn.rollback()
+                pass
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS wallet_transactions (
@@ -138,6 +151,7 @@ def init_spot_trade_tables():
                     quantity REAL NOT NULL CHECK (quantity > 0),
                     price REAL NOT NULL CHECK (price > 0),
                     total_value REAL NOT NULL CHECK (total_value > 0),
+                    fee REAL DEFAULT 0.0,
                     status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'COMPLETED', 'FAILED', 'CANCELLED')),
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -156,6 +170,18 @@ def init_spot_trade_tables():
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_spot_trades_status ON spot_trades(status)
             """)
+
+            # Migration: Add fee column to existing spot_trades table if it doesn't exist (SQLite)
+            try:
+                cursor.execute("""
+                    ALTER TABLE spot_trades ADD COLUMN fee REAL DEFAULT 0.0
+                """)
+                conn.commit()
+                logger.info("✅ Added fee column to spot_trades table (SQLite)")
+            except Exception:
+                # Column already exists or other error - continue
+                conn.rollback()
+                pass
 
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS wallet_transactions (
@@ -318,7 +344,7 @@ def update_user_balance(user_id: str, lkr_balance: Optional[float] = None, gold_
         return cursor.rowcount > 0
 
 
-def create_trade(user_id: str, order_type: str, quantity: float, price: float, total_value: float, status: str = "PENDING") -> Optional[int]:
+def create_trade(user_id: str, order_type: str, quantity: float, price: float, total_value: float, fee: float = 0.0, status: str = "PENDING") -> Optional[int]:
     """Create a new trade record"""
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -327,18 +353,18 @@ def create_trade(user_id: str, order_type: str, quantity: float, price: float, t
         
         if db_type == "postgresql":
             cursor.execute(
-                """INSERT INTO spot_trades (user_id, order_type, quantity, price, total_value, status, created_at, updated_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """INSERT INTO spot_trades (user_id, order_type, quantity, price, total_value, fee, status, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                    RETURNING id""",
-                (user_id, order_type, quantity, price, total_value, status, now, now)
+                (user_id, order_type, quantity, price, total_value, fee, status, now, now)
             )
             row = cursor.fetchone()
             trade_id = row[0] if row else None
         else:
             cursor.execute(
-                """INSERT INTO spot_trades (user_id, order_type, quantity, price, total_value, status, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (user_id, order_type, quantity, price, total_value, status, now, now)
+                """INSERT INTO spot_trades (user_id, order_type, quantity, price, total_value, fee, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, order_type, quantity, price, total_value, fee, status, now, now)
             )
             trade_id = cursor.lastrowid
         
@@ -379,7 +405,7 @@ def get_user_trades(user_id: str, limit: int = 100, offset: int = 0) -> list:
         
         if db_type == "postgresql":
             cursor.execute(
-                """SELECT id, user_id, order_type, quantity, price, total_value, status, created_at, updated_at
+                """SELECT id, user_id, order_type, quantity, price, total_value, fee, status, created_at, updated_at
                    FROM spot_trades
                    WHERE user_id = %s
                    ORDER BY created_at DESC
@@ -388,7 +414,7 @@ def get_user_trades(user_id: str, limit: int = 100, offset: int = 0) -> list:
             )
         else:
             cursor.execute(
-                """SELECT id, user_id, order_type, quantity, price, total_value, status, created_at, updated_at
+                """SELECT id, user_id, order_type, quantity, price, total_value, fee, status, created_at, updated_at
                    FROM spot_trades
                    WHERE user_id = ?
                    ORDER BY created_at DESC
@@ -411,9 +437,10 @@ def get_user_trades(user_id: str, limit: int = 100, offset: int = 0) -> list:
                 "quantity": quantity_pawn,  # Return in pawn
                 "price": float(row[4]),  # Price is already in LKR per pawn
                 "total_value": float(row[5]),
-                "status": row[6],
-                "created_at": row[7].isoformat() if hasattr(row[7], 'isoformat') else str(row[7]),
-                "updated_at": row[8].isoformat() if hasattr(row[8], 'isoformat') else str(row[8])
+                "fee": float(row[6]) if row[6] is not None else 0.0,
+                "status": row[7],
+                "created_at": row[8].isoformat() if hasattr(row[8], 'isoformat') else str(row[8]),
+                "updated_at": row[9].isoformat() if hasattr(row[9], 'isoformat') else str(row[9])
             })
         
         return trades
@@ -430,7 +457,7 @@ def get_open_orders(user_id: str) -> list:
         
         if db_type == "postgresql":
             cursor.execute(
-                """SELECT id, user_id, order_type, quantity, price, total_value, status, created_at, updated_at
+                """SELECT id, user_id, order_type, quantity, price, total_value, fee, status, created_at, updated_at
                    FROM spot_trades
                    WHERE user_id = %s AND status = 'PENDING'
                    ORDER BY created_at DESC""",
@@ -438,7 +465,7 @@ def get_open_orders(user_id: str) -> list:
             )
         else:
             cursor.execute(
-                """SELECT id, user_id, order_type, quantity, price, total_value, status, created_at, updated_at
+                """SELECT id, user_id, order_type, quantity, price, total_value, fee, status, created_at, updated_at
                    FROM spot_trades
                    WHERE user_id = ? AND status = 'PENDING'
                    ORDER BY created_at DESC""",
@@ -460,9 +487,10 @@ def get_open_orders(user_id: str) -> list:
                 "quantity": quantity_pawn,  # Return in pawn
                 "price": float(row[4]),  # Price is already in LKR per pawn
                 "total_value": float(row[5]),
-                "status": row[6],
-                "created_at": row[7].isoformat() if hasattr(row[7], 'isoformat') else str(row[7]),
-                "updated_at": row[8].isoformat() if hasattr(row[8], 'isoformat') else str(row[8])
+                "fee": float(row[6]) if row[6] is not None else 0.0,
+                "status": row[7],
+                "created_at": row[8].isoformat() if hasattr(row[8], 'isoformat') else str(row[8]),
+                "updated_at": row[9].isoformat() if hasattr(row[9], 'isoformat') else str(row[9])
             })
         
         return orders
@@ -476,7 +504,7 @@ def get_all_trades(limit: int = 200, offset: int = 0) -> list:
         db_type = get_db_type()
         if db_type == "postgresql":
             cursor.execute(
-                """SELECT id, user_id, order_type, quantity, price, total_value, status, created_at, updated_at
+                """SELECT id, user_id, order_type, quantity, price, total_value, fee, status, created_at, updated_at
                    FROM spot_trades
                    ORDER BY created_at DESC
                    LIMIT %s OFFSET %s""",
@@ -484,7 +512,7 @@ def get_all_trades(limit: int = 200, offset: int = 0) -> list:
             )
         else:
             cursor.execute(
-                """SELECT id, user_id, order_type, quantity, price, total_value, status, created_at, updated_at
+                """SELECT id, user_id, order_type, quantity, price, total_value, fee, status, created_at, updated_at
                    FROM spot_trades
                    ORDER BY created_at DESC
                    LIMIT ? OFFSET ?""",
@@ -500,9 +528,10 @@ def get_all_trades(limit: int = 200, offset: int = 0) -> list:
                 "quantity": float(row[3]) * TROY_OUNCE_TO_PAWN,
                 "price": float(row[4]),
                 "total_value": float(row[5]),
-                "status": row[6],
-                "created_at": row[7].isoformat() if hasattr(row[7], 'isoformat') else str(row[7]),
-                "updated_at": row[8].isoformat() if hasattr(row[8], 'isoformat') else str(row[8]),
+                "fee": float(row[6]) if row[6] is not None else 0.0,
+                "status": row[7],
+                "created_at": row[8].isoformat() if hasattr(row[8], 'isoformat') else str(row[8]),
+                "updated_at": row[9].isoformat() if hasattr(row[9], 'isoformat') else str(row[9]),
             })
         return result
 
