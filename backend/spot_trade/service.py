@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 # Spread in LKR
 SPREAD_LKR = 1000.0
 
+# Withdrawal fee in LKR
+WITHDRAWAL_FEE = 100.0
+
 # Conversion constants: 1 troy ounce = 31.1035 grams, 1 pawn = 8 grams
 TROY_OUNCE_GRAMS = 31.1035
 PAWN_GRAMS = 8.0
@@ -334,16 +337,25 @@ class SpotTradingService:
         return self.complete_deposit_by_stripe_session(stripe_session_id)
 
     def request_withdrawal(self, user_id: str, amount: float, bank_name: str, bank_account_number: str, bank_account_name: str) -> Dict:
-        """Create pending withdrawal and reserve balance immediately"""
+        """Create pending withdrawal and reserve balance immediately (amount + fee)"""
         if amount <= 0:
             raise ValueError("Withdrawal amount must be greater than zero")
+        
         balance = get_or_create_user_balance(user_id)
-        if amount > balance["lkr_balance"]:
-            raise ValueError("Insufficient balance")
+        
+        # Calculate total deduction (withdrawal amount + fee)
+        total_deduction = amount + WITHDRAWAL_FEE
+        
+        # Validate sufficient balance for amount + fee
+        if total_deduction > balance["lkr_balance"]:
+            raise ValueError(f"Insufficient balance. Need {total_deduction:.2f} LKR (withdrawal amount: {amount:.2f} + fee: {WITHDRAWAL_FEE:.2f})")
+        
+        # Create withdrawal transaction with fee
         tx_id = create_wallet_transaction(
             user_id=user_id,
             transaction_type=WalletTransactionType.WITHDRAWAL,
             amount=amount,
+            fee=WITHDRAWAL_FEE,
             status=WalletTransactionStatus.PENDING,
             payment_method="BANK_TRANSFER",
             bank_name=bank_name,
@@ -353,7 +365,10 @@ class SpotTradingService:
         )
         if not tx_id:
             raise ValueError("Failed to create withdrawal request")
-        update_user_balance(user_id, lkr_balance=balance["lkr_balance"] - amount)
+        
+        # Deduct both amount and fee from user's LKR balance
+        update_user_balance(user_id, lkr_balance=balance["lkr_balance"] - total_deduction)
+        
         return get_wallet_transaction_by_id(tx_id) or {"id": tx_id, "status": WalletTransactionStatus.PENDING}
 
     def approve_withdrawal(self, transaction_id: int, admin_user_id: str, approve: bool, notes: Optional[str] = None) -> Dict:
@@ -369,9 +384,10 @@ class SpotTradingService:
         if approve:
             update_wallet_transaction_status(transaction_id, WalletTransactionStatus.APPROVED, approved_by=admin_user_id, notes=notes)
         else:
-            # Refund reserved amount on rejection
+            # Refund both amount and fee on rejection
             balance = get_or_create_user_balance(tx["user_id"])
-            update_user_balance(tx["user_id"], lkr_balance=balance["lkr_balance"] + tx["amount"])
+            refund_total = tx["amount"] + tx["fee"]
+            update_user_balance(tx["user_id"], lkr_balance=balance["lkr_balance"] + refund_total)
             update_wallet_transaction_status(transaction_id, WalletTransactionStatus.REJECTED, approved_by=admin_user_id, notes=notes)
 
         return get_wallet_transaction_by_id(transaction_id) or tx
