@@ -143,6 +143,7 @@ class WalletTransactionItem(BaseModel):
     user_id: str
     transaction_type: str
     amount: float
+    fee: float = 0.0
     status: str
     payment_method: Optional[str] = None
     stripe_session_id: Optional[str] = None

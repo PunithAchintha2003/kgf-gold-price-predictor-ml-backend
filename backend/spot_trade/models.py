@@ -98,6 +98,7 @@ def init_spot_trade_tables():
                     user_id VARCHAR(255) NOT NULL,
                     transaction_type VARCHAR(20) NOT NULL CHECK (transaction_type IN ('DEPOSIT', 'WITHDRAWAL')),
                     amount DECIMAL(20, 2) NOT NULL CHECK (amount > 0),
+                    fee DECIMAL(20, 2) DEFAULT 0.0,
                     status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'COMPLETED', 'APPROVED', 'REJECTED', 'FAILED')),
                     payment_method VARCHAR(50),
                     stripe_session_id VARCHAR(255),
@@ -162,6 +163,7 @@ def init_spot_trade_tables():
                     user_id TEXT NOT NULL,
                     transaction_type TEXT NOT NULL CHECK (transaction_type IN ('DEPOSIT', 'WITHDRAWAL')),
                     amount REAL NOT NULL CHECK (amount > 0),
+                    fee REAL DEFAULT 0.0,
                     status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'COMPLETED', 'APPROVED', 'REJECTED', 'FAILED')),
                     payment_method TEXT,
                     stripe_session_id TEXT,
@@ -515,7 +517,8 @@ def create_wallet_transaction(
     bank_name: Optional[str] = None,
     bank_account_number: Optional[str] = None,
     bank_account_name: Optional[str] = None,
-    notes: Optional[str] = None
+    notes: Optional[str] = None,
+    fee: float = 0.0
 ) -> Optional[int]:
     """Create wallet transaction record"""
     with get_db_connection() as conn:
@@ -525,19 +528,19 @@ def create_wallet_transaction(
         if db_type == "postgresql":
             cursor.execute(
                 """INSERT INTO wallet_transactions
-                   (user_id, transaction_type, amount, status, payment_method, stripe_session_id, bank_name, bank_account_number, bank_account_name, notes, created_at, updated_at)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   (user_id, transaction_type, amount, fee, status, payment_method, stripe_session_id, bank_name, bank_account_number, bank_account_name, notes, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                    RETURNING id""",
-                (user_id, transaction_type, amount, status, payment_method, stripe_session_id, bank_name, bank_account_number, bank_account_name, notes, now, now)
+                (user_id, transaction_type, amount, fee, status, payment_method, stripe_session_id, bank_name, bank_account_number, bank_account_name, notes, now, now)
             )
             row = cursor.fetchone()
             tx_id = row[0] if row else None
         else:
             cursor.execute(
                 """INSERT INTO wallet_transactions
-                   (user_id, transaction_type, amount, status, payment_method, stripe_session_id, bank_name, bank_account_number, bank_account_name, notes, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (user_id, transaction_type, amount, status, payment_method, stripe_session_id, bank_name, bank_account_number, bank_account_name, notes, now, now)
+                   (user_id, transaction_type, amount, fee, status, payment_method, stripe_session_id, bank_name, bank_account_number, bank_account_name, notes, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, transaction_type, amount, fee, status, payment_method, stripe_session_id, bank_name, bank_account_number, bank_account_name, notes, now, now)
             )
             tx_id = cursor.lastrowid
         conn.commit()
@@ -551,7 +554,7 @@ def get_wallet_transaction_by_id(transaction_id: int) -> Optional[dict]:
         db_type = get_db_type()
         placeholder = "%s" if db_type == "postgresql" else "?"
         cursor.execute(
-            f"""SELECT id, user_id, transaction_type, amount, status, payment_method, stripe_session_id,
+            f"""SELECT id, user_id, transaction_type, amount, fee, status, payment_method, stripe_session_id,
                        bank_name, bank_account_number, bank_account_name, notes, approved_by, approved_at, created_at, updated_at
                 FROM wallet_transactions WHERE id = {placeholder}""",
             (transaction_id,)
@@ -569,7 +572,7 @@ def get_wallet_transaction_by_stripe_session(stripe_session_id: str) -> Optional
         db_type = get_db_type()
         placeholder = "%s" if db_type == "postgresql" else "?"
         cursor.execute(
-            f"""SELECT id, user_id, transaction_type, amount, status, payment_method, stripe_session_id,
+            f"""SELECT id, user_id, transaction_type, amount, fee, status, payment_method, stripe_session_id,
                        bank_name, bank_account_number, bank_account_name, notes, approved_by, approved_at, created_at, updated_at
                 FROM wallet_transactions WHERE stripe_session_id = {placeholder}""",
             (stripe_session_id,)
@@ -620,7 +623,7 @@ def get_wallet_transactions(user_id: Optional[str] = None, status: Optional[str]
             where.append(f"transaction_type = {placeholder}")
             params.append(transaction_type)
         where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-        query = f"""SELECT id, user_id, transaction_type, amount, status, payment_method, stripe_session_id,
+        query = f"""SELECT id, user_id, transaction_type, amount, fee, status, payment_method, stripe_session_id,
                            bank_name, bank_account_number, bank_account_name, notes, approved_by, approved_at, created_at, updated_at
                     FROM wallet_transactions
                     {where_sql}
@@ -639,16 +642,17 @@ def _wallet_row_to_dict(row) -> dict:
         "user_id": row[1],
         "transaction_type": row[2],
         "amount": float(row[3]),
-        "status": row[4],
-        "payment_method": row[5],
-        "stripe_session_id": row[6],
-        "bank_name": row[7],
-        "bank_account_number": row[8],
-        "bank_account_name": row[9],
-        "notes": row[10],
-        "approved_by": row[11],
-        "approved_at": row[12].isoformat() if row[12] and hasattr(row[12], 'isoformat') else (str(row[12]) if row[12] else None),
-        "created_at": row[13].isoformat() if hasattr(row[13], 'isoformat') else str(row[13]),
-        "updated_at": row[14].isoformat() if hasattr(row[14], 'isoformat') else str(row[14]),
+        "fee": float(row[4]) if row[4] is not None else 0.0,
+        "status": row[5],
+        "payment_method": row[6],
+        "stripe_session_id": row[7],
+        "bank_name": row[8],
+        "bank_account_number": row[9],
+        "bank_account_name": row[10],
+        "notes": row[11],
+        "approved_by": row[12],
+        "approved_at": row[13].isoformat() if row[13] and hasattr(row[13], 'isoformat') else (str(row[13]) if row[13] else None),
+        "created_at": row[14].isoformat() if hasattr(row[14], 'isoformat') else str(row[14]),
+        "updated_at": row[15].isoformat() if hasattr(row[15], 'isoformat') else str(row[15]),
     }
 
