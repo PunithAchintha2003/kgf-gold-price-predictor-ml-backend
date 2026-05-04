@@ -36,6 +36,9 @@ SPREAD_LKR = 1000.0
 # Withdrawal fee in LKR
 WITHDRAWAL_FEE = 100.0
 
+# Transaction fee per gram in LKR
+TRANSACTION_FEE_PER_GRAM = 1000.0
+
 # Conversion constants: 1 troy ounce = 31.1035 grams, 1 pawn = 8 grams
 TROY_OUNCE_GRAMS = 31.1035
 PAWN_GRAMS = 8.0
@@ -101,14 +104,24 @@ class SpotTradingService:
             # Calculate total value (quantity is in pawn, price is LKR per pawn)
             total_value_lkr = quantity * buy_price_lkr
             
+            # Calculate transaction fee based on quantity in grams
+            quantity_grams = quantity * PAWN_GRAMS  # quantity is in pawn, convert to grams
+            transaction_fee = quantity_grams * TRANSACTION_FEE_PER_GRAM
+            
             # Get or create user balance
             balance = get_or_create_user_balance(user_id)
             lkr_balance = balance['lkr_balance']
             
-            # Validate sufficient balance
-            if lkr_balance < total_value_lkr:
+            # User needs: trade value + transaction fee
+            total_deduction = total_value_lkr + transaction_fee
+            
+            # Validate sufficient balance (add epsilon tolerance for floating-point precision)
+            EPSILON = 0.01  # 1 cent tolerance for LKR comparisons
+            if lkr_balance < total_deduction - EPSILON:
                 raise ValueError(
-                    f"Insufficient LKR balance. Required: {total_value_lkr:.2f} LKR, Available: {lkr_balance:.2f} LKR"
+                    f"Insufficient LKR balance. Required: {total_deduction:.2f} LKR "
+                    f"(Trade: {total_value_lkr:.2f} + Fee: {transaction_fee:.2f}), "
+                    f"Available: {lkr_balance:.2f} LKR"
                 )
             
             # Validate minimum order size (optional - can be configured)
@@ -126,6 +139,7 @@ class SpotTradingService:
                 quantity=quantity_troy_ounces,
                 price=buy_price_lkr,  # Price is LKR per pawn
                 total_value=total_value_lkr,
+                fee=transaction_fee,
                 status=OrderStatus.PENDING
             )
             
@@ -133,8 +147,8 @@ class SpotTradingService:
                 raise ValueError("Failed to create trade record")
             
             try:
-                # Execute trade: Deduct LKR, Add Gold (gold_balance is stored in troy ounces)
-                new_lkr_balance = lkr_balance - total_value_lkr
+                # Execute trade: Deduct LKR (trade value + fee), Add Gold (gold_balance is stored in troy ounces)
+                new_lkr_balance = lkr_balance - total_deduction
                 new_gold_balance = balance['gold_balance'] + quantity_troy_ounces
                 
                 # Update balances atomically
@@ -149,7 +163,7 @@ class SpotTradingService:
                 
                 logger.info(
                     f"✅ BUY order executed: User {user_id}, Quantity: {quantity} pawn (~{quantity * PAWN_GRAMS:.2f} g), "
-                    f"Price: {buy_price_lkr} LKR/pawn"
+                    f"Price: {buy_price_lkr} LKR/pawn, Fee: {transaction_fee:.2f} LKR"
                 )
                 
                 return {
@@ -159,8 +173,9 @@ class SpotTradingService:
                     "quantity": quantity,  # Return in pawn for frontend
                     "price": buy_price_lkr,  # LKR per pawn
                     "total_value": total_value_lkr,
+                    "fee": transaction_fee,
                     "status": OrderStatus.COMPLETED,
-                    "message": f"Successfully bought {quantity:.4f} pawn of gold at {buy_price_lkr:.2f} LKR per pawn",
+                    "message": f"Successfully bought {quantity:.4f} pawn of gold at {buy_price_lkr:.2f} LKR per pawn (Fee: {transaction_fee:.2f} LKR)",
                     "created_at": datetime.now().isoformat()
                 }
             except Exception as e:
@@ -185,6 +200,10 @@ class SpotTradingService:
             # Calculate total value (quantity is in pawn, price is LKR per pawn)
             total_value_lkr = quantity * sell_price_lkr
             
+            # Calculate transaction fee based on quantity in grams
+            quantity_grams = quantity * PAWN_GRAMS
+            transaction_fee = quantity_grams * TRANSACTION_FEE_PER_GRAM
+            
             # Get or create user balance (gold_balance is stored in troy ounces)
             balance = get_or_create_user_balance(user_id)
             gold_balance_troy_ounces = balance['gold_balance']
@@ -193,12 +212,26 @@ class SpotTradingService:
             quantity_troy_ounces = quantity * PAWN_TO_TROY_OUNCE
             
             # Validate sufficient gold balance (report in grams for clarity)
-            if gold_balance_troy_ounces < quantity_troy_ounces:
+            # Add small epsilon tolerance for floating-point precision
+            EPSILON = 1e-8  # Small tolerance for troy ounce comparisons
+            if gold_balance_troy_ounces < quantity_troy_ounces - EPSILON:
                 gold_balance_pawn = gold_balance_troy_ounces * TROY_OUNCE_TO_PAWN
                 required_grams = quantity * PAWN_GRAMS
                 available_grams = gold_balance_pawn * PAWN_GRAMS
                 raise ValueError(
                     f"Insufficient gold balance. Required: {required_grams:.2f} grams, Available: {available_grams:.2f} grams"
+                )
+            
+            # Check if final balance after sale and fee deduction will be non-negative
+            # User receives sale proceeds and pays fee from that
+            final_balance = balance['lkr_balance'] + total_value_lkr - transaction_fee
+            # Add small epsilon tolerance for floating-point precision
+            EPSILON_LKR = 0.01  # 1 cent tolerance for LKR
+            if final_balance < -EPSILON_LKR:
+                raise ValueError(
+                    f"Insufficient funds. Sale proceeds ({total_value_lkr:.2f} LKR) cannot cover transaction fee ({transaction_fee:.2f} LKR) "
+                    f"with current balance ({balance['lkr_balance']:.2f} LKR). "
+                    f"Shortfall: {abs(final_balance):.2f} LKR"
                 )
             
             # Validate minimum order size
@@ -213,6 +246,7 @@ class SpotTradingService:
                 quantity=quantity_troy_ounces,
                 price=sell_price_lkr,  # Price is LKR per pawn
                 total_value=total_value_lkr,
+                fee=transaction_fee,
                 status=OrderStatus.PENDING
             )
             
@@ -220,9 +254,9 @@ class SpotTradingService:
                 raise ValueError("Failed to create trade record")
             
             try:
-                # Execute trade: Deduct Gold (in troy ounces), Add LKR
+                # Execute trade: Deduct Gold (in troy ounces), Add LKR (sale proceeds), then Deduct Fee
                 new_gold_balance = gold_balance_troy_ounces - quantity_troy_ounces
-                new_lkr_balance = balance['lkr_balance'] + total_value_lkr
+                new_lkr_balance = balance['lkr_balance'] + total_value_lkr - transaction_fee
                 
                 # Update balances atomically
                 update_user_balance(
@@ -236,7 +270,7 @@ class SpotTradingService:
                 
                 logger.info(
                     f"✅ SELL order executed: User {user_id}, Quantity: {quantity} pawn (~{quantity * PAWN_GRAMS:.2f} g), "
-                    f"Price: {sell_price_lkr} LKR/pawn"
+                    f"Price: {sell_price_lkr} LKR/pawn, Fee: {transaction_fee:.2f} LKR"
                 )
                 
                 return {
@@ -246,8 +280,9 @@ class SpotTradingService:
                     "quantity": quantity,  # Return in pawn for frontend
                     "price": sell_price_lkr,  # LKR per pawn
                     "total_value": total_value_lkr,
+                    "fee": transaction_fee,
                     "status": OrderStatus.COMPLETED,
-                    "message": f"Successfully sold {quantity * PAWN_GRAMS:.2f} grams ({quantity:.4f} pawn) of gold at {sell_price_lkr:.2f} LKR per pawn",
+                    "message": f"Successfully sold {quantity * PAWN_GRAMS:.2f} grams ({quantity:.4f} pawn) of gold at {sell_price_lkr:.2f} LKR per pawn (Fee: {transaction_fee:.2f} LKR)",
                     "created_at": datetime.now().isoformat()
                 }
             except Exception as e:

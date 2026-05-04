@@ -63,6 +63,7 @@ class TradeResponse(BaseModel):
     quantity: float
     price: float
     total_value: float
+    fee: float = Field(..., description="Transaction fee in LKR")
     status: str
     message: str
     created_at: str
@@ -84,6 +85,7 @@ class TradeHistoryItem(BaseModel):
     quantity: float
     price: float
     total_value: float
+    fee: float = Field(default=0.0, description="Transaction fee in LKR")
     status: str
     created_at: str
     updated_at: str
@@ -105,6 +107,7 @@ class OpenOrderItem(BaseModel):
     quantity: float
     price: float
     total_value: float
+    fee: float = Field(default=0.0, description="Transaction fee in LKR")
     status: str
     created_at: str
     updated_at: str
