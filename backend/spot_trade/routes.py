@@ -86,6 +86,23 @@ def require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+def require_registered_user(user: dict = Depends(get_current_user)) -> dict:
+    """Allow trading only for authenticated registered users."""
+    user_id = str(user.get("user_id", "")).strip()
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+    # Trading is available to normal registered users; keep admin support for ops/testing.
+    allowed_roles = {"USER", "SUPER_ADMIN"}
+    role = str(user.get("role", "USER")).upper()
+    if role not in allowed_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only registered users can buy or sell gold",
+        )
+    return user
+
+
 @router.get("/price", response_model=SpotTradePriceResponse)
 async def get_current_price(
     spot_trading_service: SpotTradingServiceDep
@@ -105,7 +122,7 @@ async def get_current_price(
 async def place_buy_order(
     request: BuyOrderRequest,
     spot_trading_service: SpotTradingServiceDep,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(require_registered_user)
 ):
     """Place a BUY market order"""
     try:
@@ -130,7 +147,7 @@ async def place_buy_order(
 async def place_sell_order(
     request: SellOrderRequest,
     spot_trading_service: SpotTradingServiceDep,
-    user: dict = Depends(get_current_user)
+    user: dict = Depends(require_registered_user)
 ):
     """Place a SELL market order"""
     try:
