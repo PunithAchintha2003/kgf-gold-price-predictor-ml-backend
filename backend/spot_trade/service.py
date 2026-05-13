@@ -37,7 +37,7 @@ SPREAD_LKR = 1000.0
 WITHDRAWAL_FEE = 100.0
 
 # Transaction fee per gram in LKR
-TRANSACTION_FEE_PER_GRAM = 1000.0
+TRANSACTION_FEE_PER_GRAM = 500.0
 
 # Conversion constants: 1 troy ounce = 31.1035 grams, 1 pawn = 8 grams
 TROY_OUNCE_GRAMS = 31.1035
@@ -304,14 +304,15 @@ class SpotTradingService:
             
             # Get current gold price (in LKR per pawn)
             price_data = self.get_current_price()
-            current_price_lkr_per_pawn = price_data['current_price_lkr']
+            # Use sell price for accurate liquidation value (what user would actually receive)
+            sell_price_lkr_per_pawn = price_data['sell_price_lkr']
             
             # Convert gold balance from troy ounces to pawn for frontend display
             gold_balance_pawn = balance['gold_balance'] * TROY_OUNCE_TO_PAWN
             
-            # Calculate total portfolio value (gold_balance in troy ounces, price in LKR per pawn)
-            # So: gold_balance_troy_ounces * TROY_OUNCE_TO_PAWN * price_per_pawn
-            gold_value_lkr = gold_balance_pawn * current_price_lkr_per_pawn
+            # Calculate total portfolio value using sell price (liquidation value)
+            # gold_balance in pawn × sell price per pawn
+            gold_value_lkr = gold_balance_pawn * sell_price_lkr_per_pawn
             total_value_lkr = balance['lkr_balance'] + gold_value_lkr
             
             return {
